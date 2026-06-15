@@ -1,5 +1,6 @@
 pub mod icmp;
 pub mod socket;
+pub mod udp;
 
 use std::net::IpAddr;
 use std::time::{Duration, Instant};
@@ -40,7 +41,7 @@ impl Probe for IcmpProbe {
     }
 }
 
-// --- UDP (stub) ---
+// --- UDP ---
 
 pub struct UdpProbe {
     pub timeout: Duration,
@@ -50,12 +51,8 @@ pub struct UdpProbe {
 
 #[async_trait]
 impl Probe for UdpProbe {
-    async fn send(&self, _target: IpAddr, _ttl: u8, seq: u16) -> ProbeResult {
-        ProbeResult {
-            seq: seq as u64,
-            rtt: None,
-            timestamp: Instant::now(),
-        }
+    async fn send(&self, target: IpAddr, ttl: u8, seq: u16) -> ProbeResult {
+        udp::send_udp_probe(target, ttl, seq, self.timeout, self.port).await
     }
 }
 
@@ -140,7 +137,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn udp_probe_stub_returns_none_rtt() {
+    #[ignore = "requires root: UDP probe creates raw ICMP recv socket"]
+    async fn udp_probe_send_delegates_to_udp_module() {
         let probe = UdpProbe {
             timeout: Duration::from_secs(1),
             size: 64,
@@ -149,7 +147,6 @@ mod tests {
         let result = probe
             .send(IpAddr::V4(Ipv4Addr::LOCALHOST), 5, 1)
             .await;
-        assert!(result.rtt.is_none(), "UDP stub should return None rtt");
         assert_eq!(result.seq, 1);
     }
 
