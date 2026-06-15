@@ -1,1 +1,1 @@
-// TUI widgets - to be implemented
+pub mod latency_chart;
