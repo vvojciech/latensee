@@ -6,6 +6,7 @@ pub enum ProbeProtocol {
     Icmp,
     Udp,
     Tcp,
+    TcpConnect,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -55,6 +56,10 @@ pub struct Args {
     /// Use TCP SYN probes
     #[arg(long = "tcp", group = "protocol")]
     pub tcp: bool,
+
+    /// Use unprivileged TCP connect probes (no root needed, target RTT only)
+    #[arg(long = "tcp-connect", group = "protocol")]
+    pub tcp_connect: bool,
 
     /// Target port for UDP/TCP probes
     #[arg(short = 'p', long = "port")]
@@ -118,6 +123,8 @@ impl Config {
             ProbeProtocol::Tcp
         } else if args.udp {
             ProbeProtocol::Udp
+        } else if args.tcp_connect {
+            ProbeProtocol::TcpConnect
         } else {
             ProbeProtocol::Icmp
         };
@@ -125,7 +132,7 @@ impl Config {
         let port = args.port.unwrap_or(match protocol {
             ProbeProtocol::Icmp => 0,
             ProbeProtocol::Udp => 33434,
-            ProbeProtocol::Tcp => 80,
+            ProbeProtocol::Tcp | ProbeProtocol::TcpConnect => 80,
         });
 
         let report = args.report || args.csv || args.json;
@@ -323,6 +330,20 @@ mod tests {
         let args = parse(&["example.com", "-c", "10"]);
         let config = Config::from_args(&args).unwrap();
         assert_eq!(config.count, Some(10));
+    }
+
+    #[test]
+    fn protocol_tcp_connect() {
+        let args = parse(&["example.com", "--tcp-connect"]);
+        let config = Config::from_args(&args).unwrap();
+        assert_eq!(config.protocol, ProbeProtocol::TcpConnect);
+    }
+
+    #[test]
+    fn port_defaults_tcp_connect() {
+        let args = parse(&["example.com", "--tcp-connect"]);
+        let config = Config::from_args(&args).unwrap();
+        assert_eq!(config.port, 80);
     }
 
     #[test]
