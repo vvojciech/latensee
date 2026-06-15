@@ -46,6 +46,7 @@ pub struct ProbeResult {
     pub seq: u64,
     pub rtt: Option<Duration>,
     pub timestamp: Instant,
+    pub addr: Option<IpAddr>,
 }
 
 impl HopStats {
@@ -119,6 +120,9 @@ impl HopState {
     }
 
     pub fn add_probe(&mut self, result: ProbeResult, max_samples: usize) {
+        if self.addr.is_none() {
+            self.addr = result.addr;
+        }
         self.stats.record_probe(&result);
         self.samples.push_back(result);
         while self.samples.len() > max_samples {
@@ -159,6 +163,7 @@ mod tests {
             seq,
             rtt: rtt_us.map(Duration::from_micros),
             timestamp: Instant::now(),
+            addr: None,
         }
     }
 

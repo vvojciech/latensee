@@ -75,6 +75,7 @@ mod tests {
             seq,
             rtt: rtt_us.map(Duration::from_micros),
             timestamp: Instant::now(),
+            addr: None,
         }
     }
 

@@ -220,11 +220,11 @@ pub async fn send_probe(
         loop {
             let elapsed = send_time.elapsed();
             if elapsed >= timeout {
-                return Ok::<Option<Duration>, std::io::Error>(None);
+                return Ok::<Option<(Duration, IpAddr)>, std::io::Error>(None);
             }
 
             match sock.recv_from(&mut recv_buf) {
-                Ok((n, _addr)) => {
+                Ok((n, peer_addr)) => {
                     let rtt = send_time.elapsed();
                     // SAFETY: recv_from guarantees the first n bytes are initialized
                     let received: &[u8] = unsafe {
@@ -233,10 +233,20 @@ pub async fn send_probe(
                             n,
                         )
                     };
-                    if let Some(_response) =
+                    if let Some(response) =
                         parse_icmp_response(received, identifier, seq, ipv6)
                     {
-                        return Ok(Some(rtt));
+                        let hop_addr = match response {
+                            IcmpResponseType::EchoReply => target,
+                            IcmpResponseType::TimeExceeded(addr) => {
+                                if addr.is_unspecified() {
+                                    peer_addr.as_socket().map(|s| s.ip()).unwrap_or(addr)
+                                } else {
+                                    addr
+                                }
+                            }
+                        };
+                        return Ok(Some((rtt, hop_addr)));
                     }
                     // Not our packet, keep waiting
                 }
@@ -252,15 +262,16 @@ pub async fn send_probe(
     })
     .await;
 
-    let rtt = match result {
-        Ok(Ok(rtt)) => rtt,
-        _ => None,
+    let (rtt, addr) = match result {
+        Ok(Ok(Some((rtt, addr)))) => (Some(rtt), Some(addr)),
+        _ => (None, None),
     };
 
     ProbeResult {
         seq: seq as u64,
         rtt,
         timestamp,
+        addr,
     }
 }
 

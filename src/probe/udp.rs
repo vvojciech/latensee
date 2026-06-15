@@ -168,11 +168,11 @@ pub async fn send_udp_probe(
         loop {
             let elapsed = send_time.elapsed();
             if elapsed >= timeout {
-                return Ok::<Option<Duration>, std::io::Error>(None);
+                return Ok::<Option<(Duration, IpAddr)>, std::io::Error>(None);
             }
 
             match recv_sock.recv_from(&mut recv_buf) {
-                Ok((n, _addr)) => {
+                Ok((n, peer_addr)) => {
                     let rtt = send_time.elapsed();
                     let received: &[u8] = unsafe {
                         std::slice::from_raw_parts(
@@ -180,8 +180,18 @@ pub async fn send_udp_probe(
                             n,
                         )
                     };
-                    if parse_icmp_for_udp(received, target, ipv6).is_some() {
-                        return Ok(Some(rtt));
+                    if let Some(response) = parse_icmp_for_udp(received, target, ipv6) {
+                        let hop_addr = match response {
+                            UdpResponseType::PortUnreachable => target,
+                            UdpResponseType::TimeExceeded(addr) => {
+                                if addr.is_unspecified() {
+                                    peer_addr.as_socket().map(|s| s.ip()).unwrap_or(addr)
+                                } else {
+                                    addr
+                                }
+                            }
+                        };
+                        return Ok(Some((rtt, hop_addr)));
                     }
                     // Not our packet, keep waiting
                 }
@@ -197,15 +207,16 @@ pub async fn send_udp_probe(
     })
     .await;
 
-    let rtt = match result {
-        Ok(Ok(rtt)) => rtt,
-        _ => None,
+    let (rtt, addr) = match result {
+        Ok(Ok(Some((rtt, addr)))) => (Some(rtt), Some(addr)),
+        _ => (None, None),
     };
 
     ProbeResult {
         seq: seq as u64,
         rtt,
         timestamp,
+        addr,
     }
 }
 

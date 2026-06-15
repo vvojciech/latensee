@@ -4,7 +4,7 @@ pub mod tcp;
 pub mod udp;
 
 use std::net::IpAddr;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use async_trait::async_trait;
 use rand::random;

@@ -492,6 +492,7 @@ mod tests {
                 seq,
                 rtt: Some(Duration::from_micros(1000 + seq * 500)),
                 timestamp: Instant::now(),
+                addr: None,
             };
             hop.add_probe(probe, 50);
         }

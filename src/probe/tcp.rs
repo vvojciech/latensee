@@ -298,17 +298,27 @@ pub async fn send_tcp_probe(
         loop {
             let elapsed = send_time.elapsed();
             if elapsed >= timeout {
-                return Ok::<Option<Duration>, std::io::Error>(None);
+                return Ok::<Option<(Duration, IpAddr)>, std::io::Error>(None);
             }
 
             // Try ICMP socket (time-exceeded from intermediate routers)
             match icmp_sock.recv_from(&mut recv_buf) {
-                Ok((n, _addr)) => {
+                Ok((n, peer_addr)) => {
                     let rtt = send_time.elapsed();
                     let received: &[u8] =
                         unsafe { std::slice::from_raw_parts(recv_buf.as_ptr() as *const u8, n) };
-                    if parse_tcp_response(received, src_port, port, ipv6).is_some() {
-                        return Ok(Some(rtt));
+                    if let Some(response) = parse_tcp_response(received, src_port, port, ipv6) {
+                        let hop_addr = match response {
+                            TcpResponseType::TimeExceeded(addr) => {
+                                if addr.is_unspecified() {
+                                    peer_addr.as_socket().map(|s| s.ip()).unwrap_or(addr)
+                                } else {
+                                    addr
+                                }
+                            }
+                            TcpResponseType::SynAck | TcpResponseType::Reset => target,
+                        };
+                        return Ok(Some((rtt, hop_addr)));
                     }
                 }
                 Err(e)
@@ -323,8 +333,12 @@ pub async fn send_tcp_probe(
                     let rtt = send_time.elapsed();
                     let received: &[u8] =
                         unsafe { std::slice::from_raw_parts(recv_buf.as_ptr() as *const u8, n) };
-                    if parse_tcp_response(received, src_port, port, ipv6).is_some() {
-                        return Ok(Some(rtt));
+                    if let Some(response) = parse_tcp_response(received, src_port, port, ipv6) {
+                        let hop_addr = match response {
+                            TcpResponseType::TimeExceeded(addr) => addr,
+                            TcpResponseType::SynAck | TcpResponseType::Reset => target,
+                        };
+                        return Ok(Some((rtt, hop_addr)));
                     }
                 }
                 Err(e)
@@ -339,15 +353,16 @@ pub async fn send_tcp_probe(
     })
     .await;
 
-    let rtt = match result {
-        Ok(Ok(rtt)) => rtt,
-        _ => None,
+    let (rtt, addr) = match result {
+        Ok(Ok(Some((rtt, addr)))) => (Some(rtt), Some(addr)),
+        _ => (None, None),
     };
 
     ProbeResult {
         seq: seq as u64,
         rtt,
         timestamp,
+        addr,
     }
 }
 

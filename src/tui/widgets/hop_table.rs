@@ -134,6 +134,7 @@ mod tests {
             seq: 1,
             rtt: Some(Duration::from_micros(12300)),
             timestamp: Instant::now(),
+            addr: None,
         };
         hop.stats.record_probe(&probe);
         hop
