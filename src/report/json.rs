@@ -79,6 +79,7 @@ pub fn format_json(state: &TraceState) -> String {
 mod tests {
     use super::*;
     use crate::trace::state::{HopStats, HopState, TargetInfo, TraceState};
+    use std::collections::VecDeque;
     use std::net::IpAddr;
     use std::time::{Duration, Instant};
 
@@ -103,6 +104,7 @@ mod tests {
             ttl: 3,
             addr: Some("10.0.0.1".parse().unwrap()),
             hostname: Some("router.local".to_string()),
+            samples: VecDeque::new(),
             stats: HopStats {
                 sent: 10,
                 received: 9,
@@ -122,6 +124,7 @@ mod tests {
             ttl: 2,
             addr: None,
             hostname: None,
+            samples: VecDeque::new(),
             stats: HopStats {
                 sent: 5,
                 received: 0,
@@ -137,6 +140,7 @@ mod tests {
             ttl: 4,
             addr: Some("10.0.0.2".parse().unwrap()),
             hostname: None,
+            samples: VecDeque::new(),
             stats: HopStats {
                 sent: 8,
                 received: 0,

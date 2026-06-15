@@ -175,7 +175,7 @@ pub async fn send_probe(
     };
 
     ProbeResult {
-        seq,
+        seq: seq as u64,
         rtt,
         timestamp,
     }

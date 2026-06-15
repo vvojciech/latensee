@@ -66,8 +66,9 @@ pub fn format_csv(state: &TraceState) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::trace::state::{HopState, HopStats, TraceState};
-    use std::net::IpAddr;
+    use crate::trace::state::{HopState, HopStats, TargetInfo, TraceState};
+    use std::collections::VecDeque;
+    use std::net::{IpAddr, Ipv4Addr};
     use std::time::{Duration, Instant};
 
     fn make_hop(ttl: u8, addr: Option<IpAddr>, hostname: Option<&str>, stats: HopStats) -> HopState {
@@ -75,6 +76,7 @@ mod tests {
             ttl,
             addr,
             hostname: hostname.map(String::from),
+            samples: VecDeque::new(),
             stats,
         }
     }
@@ -109,7 +111,10 @@ mod tests {
 
     fn sample_state(hops: Vec<HopState>) -> TraceState {
         TraceState {
-            target: "8.8.8.8".to_string(),
+            target: TargetInfo {
+                hostname: "dns.google".to_string(),
+                addr: IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)),
+            },
             hops,
             round: 5,
             started_at: Instant::now(),

@@ -81,6 +81,7 @@ pub fn print_report(state: &TraceState) {
 mod tests {
     use super::*;
     use crate::trace::state::{HopState, HopStats, TargetInfo, TraceState};
+    use std::collections::VecDeque;
     use std::net::IpAddr;
     use std::time::{Duration, Instant};
 
@@ -105,7 +106,7 @@ mod tests {
             ttl,
             addr,
             hostname: hostname.map(String::from),
-            samples: Vec::new(),
+            samples: VecDeque::new(),
             stats: HopStats {
                 sent,
                 received,

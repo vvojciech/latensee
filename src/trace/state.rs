@@ -9,9 +9,16 @@ pub struct TraceState {
     pub started_at: Instant,
 }
 
+#[derive(Clone)]
 pub struct TargetInfo {
     pub hostname: String,
     pub addr: IpAddr,
+}
+
+impl std::fmt::Display for TargetInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} ({})", self.hostname, self.addr)
+    }
 }
 
 pub struct HopState {
@@ -22,6 +29,7 @@ pub struct HopState {
     pub stats: HopStats,
 }
 
+#[derive(Default)]
 pub struct HopStats {
     pub sent: u64,
     pub received: u64,
@@ -134,6 +142,10 @@ impl TraceState {
             let next_ttl = (self.hops.len() + 1) as u8;
             self.hops.push(HopState::new(next_ttl));
         }
+    }
+
+    pub fn hop_count(&self) -> usize {
+        self.hops.len()
     }
 }
 
