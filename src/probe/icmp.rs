@@ -267,7 +267,7 @@ pub async fn send_probe(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+    use std::net::{IpAddr, Ipv4Addr};
 
     #[test]
     fn build_echo_request_v4_produces_valid_packet() {
