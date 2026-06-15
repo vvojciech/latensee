@@ -202,8 +202,6 @@ pub async fn send_probe(
     size: u16,
     identifier: u16,
 ) -> ProbeResult {
-    let timestamp = Instant::now();
-
     let result = tokio::task::spawn_blocking(move || {
         let ipv6 = target.is_ipv6();
         let sock = socket::create_icmp_socket(ipv6)?;
@@ -267,12 +265,7 @@ pub async fn send_probe(
         _ => (None, None),
     };
 
-    ProbeResult {
-        seq: seq as u64,
-        rtt,
-        timestamp,
-        addr,
-    }
+    ProbeResult { rtt, addr }
 }
 
 #[cfg(test)]
@@ -573,7 +566,7 @@ mod tests {
         )
         .await;
 
-        assert_eq!(result.seq, 1);
+
         assert!(
             result.rtt.is_some(),
             "expected RTT for localhost probe, got None"

@@ -68,13 +68,11 @@ mod tests {
     use crate::trace::state::{HopStats, ProbeResult};
     use std::collections::VecDeque;
     use std::net::{IpAddr, Ipv4Addr};
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
 
-    fn make_probe(seq: u64, rtt_us: Option<u64>) -> ProbeResult {
+    fn make_probe(rtt_us: Option<u64>) -> ProbeResult {
         ProbeResult {
-            seq,
             rtt: rtt_us.map(Duration::from_micros),
-            timestamp: Instant::now(),
             addr: None,
         }
     }
@@ -96,11 +94,11 @@ mod tests {
         let hop = make_hop(
             1,
             vec![
-                make_probe(0, Some(5_000)),
-                make_probe(1, None),
-                make_probe(2, Some(10_000)),
-                make_probe(3, None),
-                make_probe(4, Some(15_000)),
+                make_probe(Some(5_000)),
+                make_probe(None),
+                make_probe(Some(10_000)),
+                make_probe(None),
+                make_probe(Some(15_000)),
             ],
         );
 
@@ -124,9 +122,9 @@ mod tests {
         let hop = make_hop(
             1,
             vec![
-                make_probe(0, Some(1_500)),  // 1.5 ms
-                make_probe(1, Some(25_000)), // 25.0 ms
-                make_probe(2, Some(100)),    // 0.1 ms
+                make_probe(Some(1_500)),  // 1.5 ms
+                make_probe(Some(25_000)), // 25.0 ms
+                make_probe(Some(100)),    // 0.1 ms
             ],
         );
 

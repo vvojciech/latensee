@@ -103,7 +103,6 @@ mod tests {
     use crate::trace::state::{ProbeResult, TargetInfo, TraceState};
     use async_trait::async_trait;
     use std::net::Ipv4Addr;
-    use std::time::Instant;
 
     struct MockProbe {
         rtt: Option<Duration>,
@@ -111,11 +110,9 @@ mod tests {
 
     #[async_trait]
     impl Probe for MockProbe {
-        async fn send(&self, _target: IpAddr, _ttl: u8, seq: u16) -> ProbeResult {
+        async fn send(&self, _target: IpAddr, _ttl: u8, _seq: u16) -> ProbeResult {
             ProbeResult {
-                seq: seq as u64,
                 rtt: self.rtt,
-                timestamp: Instant::now(),
                 addr: None,
             }
         }
@@ -128,16 +125,14 @@ mod tests {
 
     #[async_trait]
     impl Probe for MockProbeWithRoute {
-        async fn send(&self, _target: IpAddr, ttl: u8, seq: u16) -> ProbeResult {
+        async fn send(&self, _target: IpAddr, ttl: u8, _seq: u16) -> ProbeResult {
             let addr = if ttl >= self.route_len {
                 Some(self.target)
             } else {
                 Some(IpAddr::V4(Ipv4Addr::new(10, 0, 0, ttl)))
             };
             ProbeResult {
-                seq: seq as u64,
                 rtt: Some(Duration::from_millis(ttl as u64)),
-                timestamp: Instant::now(),
                 addr,
             }
         }
@@ -243,40 +238,6 @@ mod tests {
             assert_eq!(hop.stats.lost, 1);
             assert!(hop.samples[0].rtt.is_none());
         }
-    }
-
-    #[tokio::test]
-    async fn probe_round_uses_correct_seq_numbers() {
-        let state = test_state();
-
-        let engine = TraceEngine {
-            state: state.clone(),
-            target: IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)),
-            probe: Box::new(MockProbe {
-                rtt: Some(Duration::from_millis(5)),
-            }),
-            interval: Duration::from_secs(1),
-            max_hops: 3,
-            count: Some(1),
-            max_samples: DEFAULT_MAX_SAMPLES,
-        };
-
-        // Round 0: seq = 0*3 + ttl = 1, 2, 3
-        engine.probe_round(0).await;
-
-        let s = state.read().unwrap();
-        assert_eq!(s.hops[0].samples[0].seq, 1);
-        assert_eq!(s.hops[1].samples[0].seq, 2);
-        assert_eq!(s.hops[2].samples[0].seq, 3);
-        drop(s);
-
-        // Round 1: seq = 1*3 + ttl = 4, 5, 6
-        engine.probe_round(1).await;
-
-        let s = state.read().unwrap();
-        assert_eq!(s.hops[0].samples[1].seq, 4);
-        assert_eq!(s.hops[1].samples[1].seq, 5);
-        assert_eq!(s.hops[2].samples[1].seq, 6);
     }
 
     #[tokio::test]

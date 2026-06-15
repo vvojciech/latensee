@@ -43,9 +43,7 @@ pub struct HopStats {
 }
 
 pub struct ProbeResult {
-    pub seq: u64,
     pub rtt: Option<Duration>,
-    pub timestamp: Instant,
     pub addr: Option<IpAddr>,
 }
 
@@ -158,11 +156,9 @@ mod tests {
     use super::*;
     use std::net::Ipv4Addr;
 
-    fn make_probe(seq: u64, rtt_us: Option<u64>) -> ProbeResult {
+    fn make_probe(rtt_us: Option<u64>) -> ProbeResult {
         ProbeResult {
-            seq,
             rtt: rtt_us.map(Duration::from_micros),
-            timestamp: Instant::now(),
             addr: None,
         }
     }
@@ -184,7 +180,7 @@ mod tests {
     #[test]
     fn record_successful_probe_updates_stats() {
         let mut stats = HopStats::new();
-        let probe = make_probe(1, Some(5000));
+        let probe = make_probe(Some(5000));
 
         stats.record_probe(&probe);
 
@@ -201,7 +197,7 @@ mod tests {
     #[test]
     fn record_timeout_increments_sent_and_lost() {
         let mut stats = HopStats::new();
-        let probe = make_probe(1, None);
+        let probe = make_probe(None);
 
         stats.record_probe(&probe);
 
@@ -222,7 +218,7 @@ mod tests {
         // = sqrt((100 + 0 + 100) / 3) = sqrt(66.666...) ~= 8164.965... microseconds
         let values_us = [10_000u64, 20_000, 30_000];
         for (i, &v) in values_us.iter().enumerate() {
-            stats.record_probe(&make_probe(i as u64, Some(v)));
+            stats.record_probe(&make_probe(Some(v)));
         }
 
         let expected_avg = 20_000.0;
@@ -243,25 +239,23 @@ mod tests {
     fn ring_buffer_trims_to_max_samples() {
         let mut hop = HopState::new(3);
         let max = 5;
-        for i in 0..10u64 {
-            hop.add_probe(make_probe(i, Some(1000)), max);
+        for _ in 0..10u64 {
+            hop.add_probe(make_probe(Some(1000)), max);
         }
 
         assert_eq!(hop.samples.len(), max);
-        // Oldest remaining should be seq 5
-        assert_eq!(hop.samples.front().unwrap().seq, 5);
-        assert_eq!(hop.samples.back().unwrap().seq, 9);
+        assert_eq!(hop.stats.sent, 10);
     }
 
     #[test]
     fn loss_pct_after_mixed_results() {
         let mut stats = HopStats::new();
         // 3 successes, 2 timeouts = 40% loss
-        stats.record_probe(&make_probe(0, Some(1000)));
-        stats.record_probe(&make_probe(1, None));
-        stats.record_probe(&make_probe(2, Some(2000)));
-        stats.record_probe(&make_probe(3, None));
-        stats.record_probe(&make_probe(4, Some(3000)));
+        stats.record_probe(&make_probe(Some(1000)));
+        stats.record_probe(&make_probe(None));
+        stats.record_probe(&make_probe(Some(2000)));
+        stats.record_probe(&make_probe(None));
+        stats.record_probe(&make_probe(Some(3000)));
 
         assert_eq!(stats.sent, 5);
         assert_eq!(stats.received, 3);
@@ -272,10 +266,10 @@ mod tests {
     #[test]
     fn min_max_rtt_tracked_correctly() {
         let mut stats = HopStats::new();
-        stats.record_probe(&make_probe(0, Some(5000)));
-        stats.record_probe(&make_probe(1, Some(1000)));
-        stats.record_probe(&make_probe(2, Some(9000)));
-        stats.record_probe(&make_probe(3, None)); // timeout should not affect min/max
+        stats.record_probe(&make_probe(Some(5000)));
+        stats.record_probe(&make_probe(Some(1000)));
+        stats.record_probe(&make_probe(Some(9000)));
+        stats.record_probe(&make_probe(None)); // timeout should not affect min/max
 
         assert_eq!(stats.min_rtt, Some(Duration::from_micros(1000)));
         assert_eq!(stats.max_rtt, Some(Duration::from_micros(9000)));

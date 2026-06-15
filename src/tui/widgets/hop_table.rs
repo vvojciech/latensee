@@ -116,7 +116,7 @@ mod tests {
     use crate::trace::state::{HopStats, ProbeResult};
     use std::collections::VecDeque;
     use std::net::{IpAddr, Ipv4Addr};
-    use std::time::Instant;
+
 
     fn make_hop(ttl: u8, addr: Option<IpAddr>, hostname: Option<&str>) -> HopState {
         HopState {
@@ -131,9 +131,7 @@ mod tests {
     fn make_hop_with_stats(ttl: u8, hostname: Option<&str>, addr: Option<IpAddr>) -> HopState {
         let mut hop = make_hop(ttl, addr, hostname);
         let probe = ProbeResult {
-            seq: 1,
             rtt: Some(Duration::from_micros(12300)),
-            timestamp: Instant::now(),
             addr: None,
         };
         hop.stats.record_probe(&probe);

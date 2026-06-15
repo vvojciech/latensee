@@ -279,7 +279,7 @@ mod tests {
     use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
     use ratatui::backend::TestBackend;
     use std::net::{IpAddr, Ipv4Addr};
-    use std::time::Instant;
+
 
     fn press(code: KeyCode) -> KeyEvent {
         KeyEvent {
@@ -489,9 +489,7 @@ mod tests {
         hop.hostname = Some(format!("hop-{}.example.com", ttl));
         for seq in 0..5u64 {
             let probe = ProbeResult {
-                seq,
                 rtt: Some(Duration::from_micros(1000 + seq * 500)),
-                timestamp: Instant::now(),
                 addr: None,
             };
             hop.add_probe(probe, 50);

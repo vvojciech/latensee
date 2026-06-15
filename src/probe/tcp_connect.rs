@@ -7,12 +7,10 @@ use crate::trace::state::ProbeResult;
 pub async fn send_tcp_connect_probe(
     target: IpAddr,
     _ttl: u8,
-    seq: u16,
+    _seq: u16,
     timeout: Duration,
     port: u16,
 ) -> ProbeResult {
-    let timestamp = Instant::now();
-
     let result = tokio::task::spawn_blocking(move || {
         let ipv6 = target.is_ipv6();
         let sock = socket::create_tcp_connect_socket(ipv6)?;
@@ -40,12 +38,7 @@ pub async fn send_tcp_connect_probe(
         _ => (None, None),
     };
 
-    ProbeResult {
-        seq: seq as u64,
-        rtt,
-        timestamp,
-        addr,
-    }
+    ProbeResult { rtt, addr }
 }
 
 #[cfg(test)]

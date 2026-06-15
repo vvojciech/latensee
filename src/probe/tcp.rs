@@ -274,7 +274,6 @@ pub async fn send_tcp_probe(
     timeout: Duration,
     port: u16,
 ) -> ProbeResult {
-    let timestamp = Instant::now();
     let src_port = 30000 + seq;
 
     let result = tokio::task::spawn_blocking(move || {
@@ -358,12 +357,7 @@ pub async fn send_tcp_probe(
         _ => (None, None),
     };
 
-    ProbeResult {
-        seq: seq as u64,
-        rtt,
-        timestamp,
-        addr,
-    }
+    ProbeResult { rtt, addr }
 }
 
 #[cfg(test)]
@@ -679,7 +673,7 @@ mod tests {
         )
         .await;
 
-        assert_eq!(result.seq, 1);
+
         // On localhost with no service on port 80, we expect RST or timeout.
         // Either is valid; just verify it completes without panic.
     }

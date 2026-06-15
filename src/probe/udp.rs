@@ -144,8 +144,6 @@ pub async fn send_udp_probe(
     timeout: Duration,
     base_port: u16,
 ) -> ProbeResult {
-    let timestamp = Instant::now();
-
     let result = tokio::task::spawn_blocking(move || {
         let ipv6 = target.is_ipv6();
 
@@ -212,12 +210,7 @@ pub async fn send_udp_probe(
         _ => (None, None),
     };
 
-    ProbeResult {
-        seq: seq as u64,
-        rtt,
-        timestamp,
-        addr,
-    }
+    ProbeResult { rtt, addr }
 }
 
 #[cfg(test)]
@@ -438,7 +431,7 @@ mod tests {
         )
         .await;
 
-        assert_eq!(result.seq, 1);
+
         // Localhost UDP probe should get a port-unreachable back quickly
         if let Some(rtt) = result.rtt {
             assert!(
