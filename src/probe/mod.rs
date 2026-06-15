@@ -76,12 +76,18 @@ pub struct TcpProbe {
     pub timeout: Duration,
     pub port: u16,
     pub port_base: u16,
+    sockets: Mutex<Option<(socket2::Socket, socket2::Socket)>>,
 }
 
 #[async_trait]
 impl Probe for TcpProbe {
     async fn send(&self, target: IpAddr, ttl: u8, seq: u16) -> ProbeResult {
-        tcp::send_tcp_probe(target, ttl, seq, self.timeout, self.port, self.port_base).await
+        let socks = self.sockets.lock().take();
+        let (result, returned_socks) =
+            tcp::send_tcp_probe(target, ttl, seq, self.timeout, self.port, self.port_base, socks)
+                .await;
+        *self.sockets.lock() = returned_socks;
+        result
     }
 }
 
@@ -118,6 +124,7 @@ pub fn create_probe(
             timeout,
             port,
             port_base: random::<u16>() | 0x8000,
+            sockets: Mutex::new(None),
         }),
         ProbeProtocol::TcpConnect => Box::new(TcpConnectProbe { timeout, port }),
     }
@@ -201,6 +208,7 @@ mod tests {
             timeout: Duration::from_secs(1),
             port: 80,
             port_base: 40000,
+            sockets: Mutex::new(None),
         };
         let result = probe
             .send(IpAddr::V4(Ipv4Addr::LOCALHOST), 5, 1)

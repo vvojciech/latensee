@@ -267,6 +267,8 @@ fn parse_tcp_reply(
 ///
 /// Creates a raw TCP socket for sending and a raw ICMP socket for receiving
 /// time-exceeded messages from intermediate routers.
+type TcpSocketPair = (socket2::Socket, socket2::Socket);
+
 pub async fn send_tcp_probe(
     target: IpAddr,
     ttl: u8,
@@ -274,17 +276,23 @@ pub async fn send_tcp_probe(
     timeout: Duration,
     port: u16,
     port_base: u16,
-) -> ProbeResult {
+    existing_socks: Option<TcpSocketPair>,
+) -> (ProbeResult, Option<TcpSocketPair>) {
     let src_port = port_base.wrapping_add(seq);
 
     let result = tokio::task::spawn_blocking(move || {
         let ipv6 = target.is_ipv6();
 
-        let tcp_sock = socket::create_tcp_socket(ipv6)?;
+        let (tcp_sock, icmp_sock) = match existing_socks {
+            Some(pair) => pair,
+            None => {
+                let t = socket::create_tcp_socket(ipv6)?;
+                let i = socket::create_icmp_socket(ipv6)?;
+                (t, i)
+            }
+        };
         socket::set_ttl(&tcp_sock, ttl, ipv6)?;
         socket::set_timeout(&tcp_sock, timeout)?;
-
-        let icmp_sock = socket::create_icmp_socket(ipv6)?;
         socket::set_timeout(&icmp_sock, timeout)?;
 
         let packet = build_tcp_syn(src_port, port, target, seq as u32);
@@ -294,15 +302,15 @@ pub async fn send_tcp_probe(
         tcp_sock.send_to(&packet, &dest)?;
 
         let mut recv_buf = [MaybeUninit::<u8>::uninit(); 1500];
+        let socks = (tcp_sock, icmp_sock);
 
         loop {
             let elapsed = send_time.elapsed();
             if elapsed >= timeout {
-                return Ok::<Option<(Duration, IpAddr)>, std::io::Error>(None);
+                return Ok::<(Option<(Duration, IpAddr)>, TcpSocketPair), std::io::Error>((None, socks));
             }
 
-            // Try ICMP socket (time-exceeded from intermediate routers)
-            match icmp_sock.recv_from(&mut recv_buf) {
+            match socks.1.recv_from(&mut recv_buf) {
                 Ok((n, peer_addr)) => {
                     let rtt = send_time.elapsed();
                     let received: &[u8] =
@@ -318,7 +326,7 @@ pub async fn send_tcp_probe(
                             }
                             TcpResponseType::SynAck | TcpResponseType::Reset => target,
                         };
-                        return Ok(Some((rtt, hop_addr)));
+                        return Ok((Some((rtt, hop_addr)), socks));
                     }
                 }
                 Err(e)
@@ -327,8 +335,7 @@ pub async fn send_tcp_probe(
                 Err(e) => return Err(e),
             }
 
-            // Try TCP socket (SYN-ACK or RST from target)
-            match tcp_sock.recv_from(&mut recv_buf) {
+            match socks.0.recv_from(&mut recv_buf) {
                 Ok((n, _addr)) => {
                     let rtt = send_time.elapsed();
                     let received: &[u8] =
@@ -338,14 +345,14 @@ pub async fn send_tcp_probe(
                             TcpResponseType::TimeExceeded(addr) => addr,
                             TcpResponseType::SynAck | TcpResponseType::Reset => target,
                         };
-                        return Ok(Some((rtt, hop_addr)));
+                        return Ok((Some((rtt, hop_addr)), socks));
                     }
                 }
                 Err(e)
                     if e.kind() == std::io::ErrorKind::WouldBlock
                         || e.kind() == std::io::ErrorKind::TimedOut =>
                 {
-                    return Ok(None);
+                    return Ok((None, socks));
                 }
                 Err(e) => return Err(e),
             }
@@ -353,14 +360,24 @@ pub async fn send_tcp_probe(
     })
     .await;
 
-    let (rtt, addr, error) = match result {
-        Ok(Ok(Some((rtt, addr)))) => (Some(rtt), Some(addr), None),
-        Ok(Ok(None)) => (None, None, None),
-        Ok(Err(e)) => (None, None, Some(e.to_string())),
-        Err(_) => (None, None, Some("probe task panicked".into())),
-    };
-
-    ProbeResult { rtt, addr, error }
+    match result {
+        Ok(Ok((Some((rtt, addr)), socks))) => (
+            ProbeResult { rtt: Some(rtt), addr: Some(addr), error: None },
+            Some(socks),
+        ),
+        Ok(Ok((None, socks))) => (
+            ProbeResult { rtt: None, addr: None, error: None },
+            Some(socks),
+        ),
+        Ok(Err(e)) => (
+            ProbeResult { rtt: None, addr: None, error: Some(e.to_string()) },
+            None,
+        ),
+        Err(_) => (
+            ProbeResult { rtt: None, addr: None, error: Some("probe task panicked".into()) },
+            None,
+        ),
+    }
 }
 
 #[cfg(test)]
@@ -667,19 +684,20 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires root: raw TCP and ICMP sockets need CAP_NET_RAW or sudo"]
     async fn send_tcp_probe_integration() {
-        let result = send_tcp_probe(
+        let (result, _returned_socks) = send_tcp_probe(
             IpAddr::V4(Ipv4Addr::LOCALHOST),
             64,
             1,
             Duration::from_secs(2),
             80,
             40000,
+            None,
         )
         .await;
 
-
         // On localhost with no service on port 80, we expect RST or timeout.
         // Either is valid; just verify it completes without panic.
+        let _ = result;
     }
 
     #[test]
