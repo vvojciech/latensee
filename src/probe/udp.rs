@@ -137,22 +137,28 @@ fn parse_icmpv6_for_udp(buf: &[u8], target: IpAddr) -> Option<UdpResponseType> {
 ///
 /// Creates a UDP socket for sending and a raw ICMP socket for receiving
 /// time-exceeded or port-unreachable responses.
+type SocketPair = (socket2::Socket, socket2::Socket);
+
 pub async fn send_udp_probe(
     target: IpAddr,
     ttl: u8,
     seq: u16,
     timeout: Duration,
     base_port: u16,
-) -> ProbeResult {
+    existing_socks: Option<SocketPair>,
+) -> (ProbeResult, Option<SocketPair>) {
     let result = tokio::task::spawn_blocking(move || {
         let ipv6 = target.is_ipv6();
 
-        // UDP send socket (no root needed)
-        let send_sock = socket::create_udp_socket(ipv6)?;
+        let (send_sock, recv_sock) = match existing_socks {
+            Some(pair) => pair,
+            None => {
+                let s = socket::create_udp_socket(ipv6)?;
+                let r = socket::create_icmp_socket(ipv6)?;
+                (s, r)
+            }
+        };
         socket::set_ttl(&send_sock, ttl, ipv6)?;
-
-        // Raw ICMP receive socket (needs root)
-        let recv_sock = socket::create_icmp_socket(ipv6)?;
         socket::set_timeout(&recv_sock, timeout)?;
 
         let dest_port = base_port.wrapping_add(seq);
@@ -166,7 +172,7 @@ pub async fn send_udp_probe(
         loop {
             let elapsed = send_time.elapsed();
             if elapsed >= timeout {
-                return Ok::<Option<(Duration, IpAddr)>, std::io::Error>(None);
+                return Ok::<(Option<(Duration, IpAddr)>, SocketPair), std::io::Error>((None, (send_sock, recv_sock)));
             }
 
             match recv_sock.recv_from(&mut recv_buf) {
@@ -189,15 +195,14 @@ pub async fn send_udp_probe(
                                 }
                             }
                         };
-                        return Ok(Some((rtt, hop_addr)));
+                        return Ok((Some((rtt, hop_addr)), (send_sock, recv_sock)));
                     }
-                    // Not our packet, keep waiting
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                    return Ok(None);
+                    return Ok((None, (send_sock, recv_sock)));
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
-                    return Ok(None);
+                    return Ok((None, (send_sock, recv_sock)));
                 }
                 Err(e) => return Err(e),
             }
@@ -205,14 +210,24 @@ pub async fn send_udp_probe(
     })
     .await;
 
-    let (rtt, addr, error) = match result {
-        Ok(Ok(Some((rtt, addr)))) => (Some(rtt), Some(addr), None),
-        Ok(Ok(None)) => (None, None, None),
-        Ok(Err(e)) => (None, None, Some(e.to_string())),
-        Err(_) => (None, None, Some("probe task panicked".into())),
-    };
-
-    ProbeResult { rtt, addr, error }
+    match result {
+        Ok(Ok((Some((rtt, addr)), socks))) => (
+            ProbeResult { rtt: Some(rtt), addr: Some(addr), error: None },
+            Some(socks),
+        ),
+        Ok(Ok((None, socks))) => (
+            ProbeResult { rtt: None, addr: None, error: None },
+            Some(socks),
+        ),
+        Ok(Err(e)) => (
+            ProbeResult { rtt: None, addr: None, error: Some(e.to_string()) },
+            None,
+        ),
+        Err(_) => (
+            ProbeResult { rtt: None, addr: None, error: Some("probe task panicked".into()) },
+            None,
+        ),
+    }
 }
 
 #[cfg(test)]
@@ -424,15 +439,15 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires root: raw ICMP socket needs CAP_NET_RAW or sudo"]
     async fn send_udp_probe_to_localhost() {
-        let result = send_udp_probe(
+        let (result, _returned_socks) = send_udp_probe(
             IpAddr::V4(Ipv4Addr::LOCALHOST),
             64,
             1,
             Duration::from_secs(2),
             33434,
+            None,
         )
         .await;
-
 
         // Localhost UDP probe should get a port-unreachable back quickly
         if let Some(rtt) = result.rtt {

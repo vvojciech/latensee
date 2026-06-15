@@ -56,12 +56,17 @@ impl Probe for IcmpProbe {
 pub struct UdpProbe {
     pub timeout: Duration,
     pub port: u16,
+    sockets: Mutex<Option<(socket2::Socket, socket2::Socket)>>,
 }
 
 #[async_trait]
 impl Probe for UdpProbe {
     async fn send(&self, target: IpAddr, ttl: u8, seq: u16) -> ProbeResult {
-        udp::send_udp_probe(target, ttl, seq, self.timeout, self.port).await
+        let socks = self.sockets.lock().take();
+        let (result, returned_socks) =
+            udp::send_udp_probe(target, ttl, seq, self.timeout, self.port, socks).await;
+        *self.sockets.lock() = returned_socks;
+        result
     }
 }
 
@@ -104,7 +109,11 @@ pub fn create_probe(
 ) -> Box<dyn Probe> {
     match protocol {
         ProbeProtocol::Icmp => Box::new(IcmpProbe::new(timeout, size)),
-        ProbeProtocol::Udp => Box::new(UdpProbe { timeout, port }),
+        ProbeProtocol::Udp => Box::new(UdpProbe {
+            timeout,
+            port,
+            sockets: Mutex::new(None),
+        }),
         ProbeProtocol::Tcp => Box::new(TcpProbe {
             timeout,
             port,
@@ -177,6 +186,7 @@ mod tests {
         let probe = UdpProbe {
             timeout: Duration::from_secs(1),
             port: 33434,
+            sockets: Mutex::new(None),
         };
         let result = probe
             .send(IpAddr::V4(Ipv4Addr::LOCALHOST), 5, 1)
