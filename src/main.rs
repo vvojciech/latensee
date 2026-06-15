@@ -20,13 +20,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    // Raw sockets needed for ICMP and TCP, not UDP
-    if config.protocol != config::ProbeProtocol::Udp {
-        if let Err(e) = probe::socket::check_privileges() {
-            eprintln!("{e}");
-            std::process::exit(1);
+    let has_privileges = probe::socket::check_privileges().is_ok();
+    let config = if config.protocol == config::ProbeProtocol::TcpConnect {
+        config
+    } else if !has_privileges {
+        eprintln!(
+            "Warning: no raw socket privileges, falling back to TCP connect mode \
+             (target RTT only, no intermediate hops)"
+        );
+        let port = if config.port == 0 { 80 } else { config.port };
+        config::Config {
+            protocol: config::ProbeProtocol::TcpConnect,
+            port,
+            max_hops: 1,
+            ..config
         }
-    }
+    } else {
+        config
+    };
 
     // Resolve all targets to IP addresses
     let mut states: Vec<Arc<RwLock<trace::state::TraceState>>> = Vec::new();
