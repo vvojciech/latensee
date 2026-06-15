@@ -62,12 +62,13 @@ impl Probe for UdpProbe {
 pub struct TcpProbe {
     pub timeout: Duration,
     pub port: u16,
+    pub port_base: u16,
 }
 
 #[async_trait]
 impl Probe for TcpProbe {
     async fn send(&self, target: IpAddr, ttl: u8, seq: u16) -> ProbeResult {
-        tcp::send_tcp_probe(target, ttl, seq, self.timeout, self.port).await
+        tcp::send_tcp_probe(target, ttl, seq, self.timeout, self.port, self.port_base).await
     }
 }
 
@@ -96,7 +97,11 @@ pub fn create_probe(
     match protocol {
         ProbeProtocol::Icmp => Box::new(IcmpProbe::new(timeout, size)),
         ProbeProtocol::Udp => Box::new(UdpProbe { timeout, port }),
-        ProbeProtocol::Tcp => Box::new(TcpProbe { timeout, port }),
+        ProbeProtocol::Tcp => Box::new(TcpProbe {
+            timeout,
+            port,
+            port_base: random::<u16>() | 0x8000,
+        }),
         ProbeProtocol::TcpConnect => Box::new(TcpConnectProbe { timeout, port }),
     }
 }
@@ -177,6 +182,7 @@ mod tests {
         let probe = TcpProbe {
             timeout: Duration::from_secs(1),
             port: 80,
+            port_base: 40000,
         };
         let result = probe
             .send(IpAddr::V4(Ipv4Addr::LOCALHOST), 5, 1)

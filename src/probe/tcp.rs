@@ -273,8 +273,9 @@ pub async fn send_tcp_probe(
     seq: u16,
     timeout: Duration,
     port: u16,
+    port_base: u16,
 ) -> ProbeResult {
-    let src_port = 30000 + seq;
+    let src_port = port_base.wrapping_add(seq);
 
     let result = tokio::task::spawn_blocking(move || {
         let ipv6 = target.is_ipv6();
@@ -672,11 +673,28 @@ mod tests {
             1,
             Duration::from_secs(2),
             80,
+            40000,
         )
         .await;
 
 
         // On localhost with no service on port 80, we expect RST or timeout.
         // Either is valid; just verify it completes without panic.
+    }
+
+    #[test]
+    fn source_port_uses_port_base_with_wrapping() {
+        let base: u16 = 0x8000;
+        let src1 = base.wrapping_add(1);
+        let src2 = base.wrapping_add(2);
+        assert_ne!(src1, src2);
+        assert!(src1 >= 0x8000, "port should stay in ephemeral range");
+    }
+
+    #[test]
+    fn source_port_wraps_without_panic() {
+        let base: u16 = 0xFFFF;
+        let src = base.wrapping_add(1);
+        assert_eq!(src, 0);
     }
 }
