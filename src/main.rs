@@ -5,7 +5,8 @@ mod trace;
 mod tui;
 
 use clap::Parser;
-use std::sync::{Arc, RwLock};
+use parking_lot::RwLock;
+use std::sync::Arc;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
@@ -101,7 +102,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             if multi && i > 0 {
                 println!();
             }
-            let state = state.read().unwrap();
+            let state = state.read();
             if config.csv {
                 print!("{}", report::csv_report::format_csv(&state));
             } else if config.json {
@@ -128,7 +129,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             if i > 0 {
                 println!();
             }
-            let state = state.read().unwrap();
+            let state = state.read();
             report::text::print_report(&state);
         }
 

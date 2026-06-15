@@ -1,6 +1,7 @@
+use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::net::IpAddr;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 use hickory_resolver::Resolver;
 use hickory_resolver::name_server::TokioConnectionProvider;
@@ -86,7 +87,7 @@ pub async fn run_dns_resolver(
     loop {
         // Collect addresses that need resolution
         let addrs_to_resolve: Vec<(usize, IpAddr)> = {
-            let state = state.read().unwrap();
+            let state = state.read();
             state
                 .hops
                 .iter()
@@ -114,7 +115,7 @@ pub async fn run_dns_resolver(
 
             let hostname = resolver.resolve(addr).await;
 
-            let mut state = state.write().unwrap();
+            let mut state = state.write();
             if let Some(hop) = state.hops.get_mut(idx) {
                 if hop.addr == Some(addr) {
                     hop.hostname = hostname;

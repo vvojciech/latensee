@@ -1,7 +1,8 @@
 pub mod widgets;
 
 use std::io::Stdout;
-use std::sync::{Arc, RwLock};
+use parking_lot::RwLock;
+use std::sync::Arc;
 use std::time::Duration;
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
@@ -241,7 +242,7 @@ async fn run_event_loop(
     loop {
         // Render the active target
         let state = &states[app.active_target];
-        let trace_state = state.read().unwrap();
+        let trace_state = state.read();
         let hop_count = trace_state.hop_count();
 
         terminal.draw(|frame| {

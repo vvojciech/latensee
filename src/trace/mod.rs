@@ -1,8 +1,9 @@
 pub mod dns;
 pub mod state;
 
+use parking_lot::RwLock;
 use std::net::IpAddr;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use std::time::Duration;
 
 use tokio_util::sync::CancellationToken;
@@ -25,7 +26,7 @@ pub struct TraceEngine {
 
 impl TraceEngine {
     pub fn new(state: Arc<RwLock<TraceState>>, config: &Config) -> Self {
-        let target = state.read().unwrap().target.addr;
+        let target = state.read().target.addr;
         let probe = create_probe(
             config.protocol,
             Duration::from_secs_f64(config.timeout),
@@ -58,7 +59,7 @@ impl TraceEngine {
             self.probe_round(round).await;
 
             {
-                let mut state = self.state.write().unwrap();
+                let mut state = self.state.write();
                 state.round = round + 1;
             }
 
@@ -87,7 +88,7 @@ impl TraceEngine {
             }
         }
 
-        let mut state = self.state.write().unwrap();
+        let mut state = self.state.write();
         for (ttl, result) in results {
             state.ensure_hop(ttl);
             let hop = &mut state.hops[(ttl - 1) as usize];
@@ -204,7 +205,7 @@ mod tests {
 
         engine.probe_round(0).await;
 
-        let s = state.read().unwrap();
+        let s = state.read();
         assert_eq!(s.hops.len(), 3);
         for (i, hop) in s.hops.iter().enumerate() {
             assert_eq!(hop.ttl, (i + 1) as u8);
@@ -231,7 +232,7 @@ mod tests {
 
         engine.probe_round(0).await;
 
-        let s = state.read().unwrap();
+        let s = state.read();
         assert_eq!(s.hops.len(), 2);
         for hop in &s.hops {
             assert_eq!(hop.stats.sent, 1);
@@ -259,7 +260,7 @@ mod tests {
         let cancel = CancellationToken::new();
         engine.run(cancel).await;
 
-        let s = state.read().unwrap();
+        let s = state.read();
         assert_eq!(s.round, 3);
         for hop in &s.hops {
             assert_eq!(hop.stats.sent, 3);
@@ -292,7 +293,7 @@ mod tests {
 
         engine.run(cancel).await;
 
-        let s = state.read().unwrap();
+        let s = state.read();
         assert!(s.round >= 1);
     }
 
@@ -320,7 +321,7 @@ mod tests {
 
         engine.probe_round(0).await;
 
-        let s = state.read().unwrap();
+        let s = state.read();
         assert_eq!(s.hops.len(), 3, "should stop at hop 3 (the destination)");
         assert_eq!(s.hops[0].addr, Some(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))));
         assert_eq!(s.hops[1].addr, Some(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2))));
@@ -343,7 +344,7 @@ mod tests {
 
         engine.probe_round(0).await;
 
-        let s = state.read().unwrap();
+        let s = state.read();
         assert_eq!(s.hops.len(), 3, "should probe all hops when target never responds");
     }
 
@@ -357,7 +358,7 @@ mod tests {
         let state_clone = state.clone();
 
         let handle = std::thread::spawn(move || {
-            let _guard = state_clone.write().unwrap();
+            let _guard = state_clone.write();
             panic!("simulated probe panic while holding write lock");
         });
 
@@ -365,7 +366,7 @@ mod tests {
 
         // With std::sync::RwLock this panics (poisoned lock).
         // With parking_lot::RwLock this succeeds (no poisoning).
-        let s = state.read().unwrap();
+        let s = state.read();
         assert_eq!(s.hop_count(), 0);
     }
 }
