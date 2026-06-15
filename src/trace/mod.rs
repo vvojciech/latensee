@@ -121,6 +121,28 @@ mod tests {
         }
     }
 
+    struct MockProbeWithRoute {
+        target: IpAddr,
+        route_len: u8,
+    }
+
+    #[async_trait]
+    impl Probe for MockProbeWithRoute {
+        async fn send(&self, _target: IpAddr, ttl: u8, seq: u16) -> ProbeResult {
+            let addr = if ttl >= self.route_len {
+                Some(self.target)
+            } else {
+                Some(IpAddr::V4(Ipv4Addr::new(10, 0, 0, ttl)))
+            };
+            ProbeResult {
+                seq: seq as u64,
+                rtt: Some(Duration::from_millis(ttl as u64)),
+                timestamp: Instant::now(),
+                addr,
+            }
+        }
+    }
+
     fn test_config() -> Config {
         Config {
             targets: vec!["192.0.2.1".to_string()],
@@ -311,5 +333,56 @@ mod tests {
 
         let s = state.read().unwrap();
         assert!(s.round >= 1);
+    }
+
+    #[tokio::test]
+    async fn probe_round_stops_at_destination() {
+        let target_ip = IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1));
+        let target = TargetInfo {
+            hostname: "192.0.2.1".to_string(),
+            addr: target_ip,
+        };
+        let state = Arc::new(RwLock::new(TraceState::new(target, 5)));
+
+        let engine = TraceEngine {
+            state: state.clone(),
+            target: target_ip,
+            probe: Box::new(MockProbeWithRoute {
+                target: target_ip,
+                route_len: 3,
+            }),
+            interval: Duration::from_secs(1),
+            max_hops: 5,
+            count: Some(1),
+            max_samples: DEFAULT_MAX_SAMPLES,
+        };
+
+        engine.probe_round(0).await;
+
+        let s = state.read().unwrap();
+        assert_eq!(s.hops.len(), 3, "should stop at hop 3 (the destination)");
+        assert_eq!(s.hops[0].addr, Some(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))));
+        assert_eq!(s.hops[1].addr, Some(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2))));
+        assert_eq!(s.hops[2].addr, Some(target_ip));
+    }
+
+    #[tokio::test]
+    async fn probe_round_probes_all_hops_when_target_unreachable() {
+        let state = test_state();
+
+        let engine = TraceEngine {
+            state: state.clone(),
+            target: IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)),
+            probe: Box::new(MockProbe { rtt: None }),
+            interval: Duration::from_secs(1),
+            max_hops: 3,
+            count: Some(1),
+            max_samples: DEFAULT_MAX_SAMPLES,
+        };
+
+        engine.probe_round(0).await;
+
+        let s = state.read().unwrap();
+        assert_eq!(s.hops.len(), 3, "should probe all hops when target never responds");
     }
 }
