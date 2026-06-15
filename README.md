@@ -34,7 +34,7 @@ cargo install latensee
 From source:
 
 ```sh
-git clone https://github.com/yourusername/latensee.git
+git clone https://github.com/vvojciech/latensee.git
 cd latensee
 cargo build --release
 # binary at ./target/release/latensee
