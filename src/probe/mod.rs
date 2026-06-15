@@ -4,6 +4,7 @@ pub mod tcp;
 pub mod tcp_connect;
 pub mod udp;
 
+use parking_lot::Mutex;
 use std::net::IpAddr;
 use std::time::Duration;
 
@@ -24,6 +25,7 @@ pub struct IcmpProbe {
     pub timeout: Duration,
     pub size: u16,
     pub identifier: u16,
+    socket: Mutex<Option<socket2::Socket>>,
 }
 
 impl IcmpProbe {
@@ -32,6 +34,7 @@ impl IcmpProbe {
             timeout,
             size,
             identifier: random(),
+            socket: Mutex::new(None),
         }
     }
 }
@@ -39,7 +42,12 @@ impl IcmpProbe {
 #[async_trait]
 impl Probe for IcmpProbe {
     async fn send(&self, target: IpAddr, ttl: u8, seq: u16) -> ProbeResult {
-        icmp::send_probe(target, ttl, seq, self.timeout, self.size, self.identifier).await
+        let sock = self.socket.lock().take();
+        let (result, returned_sock) =
+            icmp::send_probe(target, ttl, seq, self.timeout, self.size, self.identifier, sock)
+                .await;
+        *self.socket.lock() = returned_sock;
+        result
     }
 }
 

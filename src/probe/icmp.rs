@@ -194,6 +194,8 @@ fn parse_icmpv6_response(
 }
 
 /// Send a single ICMP probe and wait for a response.
+/// Send a single ICMP probe using the provided socket (or creating one if None).
+/// Returns the probe result and the socket for reuse.
 pub async fn send_probe(
     target: IpAddr,
     ttl: u8,
@@ -201,10 +203,14 @@ pub async fn send_probe(
     timeout: Duration,
     size: u16,
     identifier: u16,
-) -> ProbeResult {
+    existing_sock: Option<socket2::Socket>,
+) -> (ProbeResult, Option<socket2::Socket>) {
     let result = tokio::task::spawn_blocking(move || {
         let ipv6 = target.is_ipv6();
-        let sock = socket::create_icmp_socket(ipv6)?;
+        let sock = match existing_sock {
+            Some(s) => s,
+            None => socket::create_icmp_socket(ipv6)?,
+        };
         socket::set_ttl(&sock, ttl, ipv6)?;
         socket::set_timeout(&sock, timeout)?;
 
@@ -218,7 +224,7 @@ pub async fn send_probe(
         loop {
             let elapsed = send_time.elapsed();
             if elapsed >= timeout {
-                return Ok::<Option<(Duration, IpAddr)>, std::io::Error>(None);
+                return Ok::<(Option<(Duration, IpAddr)>, socket2::Socket), std::io::Error>((None, sock));
             }
 
             match sock.recv_from(&mut recv_buf) {
@@ -244,15 +250,14 @@ pub async fn send_probe(
                                 }
                             }
                         };
-                        return Ok(Some((rtt, hop_addr)));
+                        return Ok((Some((rtt, hop_addr)), sock));
                     }
-                    // Not our packet, keep waiting
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                    return Ok(None); // Timeout
+                    return Ok((None, sock));
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
-                    return Ok(None);
+                    return Ok((None, sock));
                 }
                 Err(e) => return Err(e),
             }
@@ -260,14 +265,24 @@ pub async fn send_probe(
     })
     .await;
 
-    let (rtt, addr, error) = match result {
-        Ok(Ok(Some((rtt, addr)))) => (Some(rtt), Some(addr), None),
-        Ok(Ok(None)) => (None, None, None),
-        Ok(Err(e)) => (None, None, Some(e.to_string())),
-        Err(_) => (None, None, Some("probe task panicked".into())),
-    };
-
-    ProbeResult { rtt, addr, error }
+    match result {
+        Ok(Ok((Some((rtt, addr)), sock)) ) => (
+            ProbeResult { rtt: Some(rtt), addr: Some(addr), error: None },
+            Some(sock),
+        ),
+        Ok(Ok((None, sock))) => (
+            ProbeResult { rtt: None, addr: None, error: None },
+            Some(sock),
+        ),
+        Ok(Err(e)) => (
+            ProbeResult { rtt: None, addr: None, error: Some(e.to_string()) },
+            None,
+        ),
+        Err(_) => (
+            ProbeResult { rtt: None, addr: None, error: Some("probe task panicked".into()) },
+            None,
+        ),
+    }
 }
 
 #[cfg(test)]
@@ -558,17 +573,18 @@ mod tests {
     #[tokio::test]
     #[ignore] // Requires root privileges for raw ICMP sockets
     async fn send_probe_to_localhost_returns_rtt() {
-        let result = send_probe(
+        let (result, returned_sock) = send_probe(
             IpAddr::V4(Ipv4Addr::LOCALHOST),
             64,
             1,
             Duration::from_secs(2),
             32,
-            0x7070, // "pp" for latensee
+            0x7070,
+            None,
         )
         .await;
 
-
+        assert!(returned_sock.is_some(), "socket should be returned for reuse");
         assert!(
             result.rtt.is_some(),
             "expected RTT for localhost probe, got None"
