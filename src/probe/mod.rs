@@ -1,6 +1,7 @@
 pub mod icmp;
 pub mod socket;
 pub mod tcp;
+pub mod tcp_connect;
 pub mod udp;
 
 use std::net::IpAddr;
@@ -72,6 +73,20 @@ impl Probe for TcpProbe {
     }
 }
 
+// --- TCP Connect (unprivileged) ---
+
+pub struct TcpConnectProbe {
+    pub timeout: Duration,
+    pub port: u16,
+}
+
+#[async_trait]
+impl Probe for TcpConnectProbe {
+    async fn send(&self, target: IpAddr, ttl: u8, seq: u16) -> ProbeResult {
+        tcp_connect::send_tcp_connect_probe(target, ttl, seq, self.timeout, self.port).await
+    }
+}
+
 // --- Factory ---
 
 pub fn create_probe(
@@ -84,6 +99,7 @@ pub fn create_probe(
         ProbeProtocol::Icmp => Box::new(IcmpProbe::new(timeout, size)),
         ProbeProtocol::Udp => Box::new(UdpProbe { timeout, size, port }),
         ProbeProtocol::Tcp => Box::new(TcpProbe { timeout, size, port }),
+        ProbeProtocol::TcpConnect => Box::new(TcpConnectProbe { timeout, port }),
     }
 }
 
@@ -119,6 +135,17 @@ mod tests {
     fn create_probe_with_tcp_returns_probe() {
         let probe = create_probe(
             ProbeProtocol::Tcp,
+            Duration::from_secs(2),
+            64,
+            80,
+        );
+        let _: &dyn Probe = probe.as_ref();
+    }
+
+    #[test]
+    fn create_probe_with_tcp_connect_returns_probe() {
+        let probe = create_probe(
+            ProbeProtocol::TcpConnect,
             Duration::from_secs(2),
             64,
             80,

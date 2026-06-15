@@ -62,6 +62,13 @@ pub fn create_udp_socket(ipv6: bool) -> Result<Socket, std::io::Error> {
     Socket::new(domain, Type::DGRAM, Some(Protocol::UDP))
 }
 
+/// Create a TCP stream socket for unprivileged connect probes.
+/// Uses SOCK_STREAM (no raw socket privilege needed).
+pub fn create_tcp_connect_socket(ipv6: bool) -> Result<Socket, std::io::Error> {
+    let domain = if ipv6 { Domain::IPV6 } else { Domain::IPV4 };
+    Socket::new(domain, Type::STREAM, Some(Protocol::TCP))
+}
+
 /// Create a raw TCP socket for TCP-based probes.
 /// IPv4: AF_INET + SOCK_RAW + IPPROTO_TCP
 /// IPv6: AF_INET6 + SOCK_RAW + IPPROTO_TCP
