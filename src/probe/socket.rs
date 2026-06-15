@@ -52,7 +52,6 @@ pub fn create_icmp_socket(ipv6: bool) -> Result<Socket, std::io::Error> {
         (Domain::IPV4, Protocol::ICMPV4)
     };
     let socket = Socket::new(domain, Type::RAW, Some(protocol))?;
-    socket.set_nonblocking(true)?;
     Ok(socket)
 }
 
