@@ -80,7 +80,11 @@ impl TraceEngine {
         for ttl in 1..=self.max_hops {
             let seq = (round * self.max_hops as u64 + ttl as u64) as u16;
             let result = self.probe.send(self.target, ttl, seq).await;
+            let reached = result.addr == Some(self.target);
             results.push((ttl, result));
+            if reached {
+                break;
+            }
         }
 
         let mut state = self.state.write().unwrap();
@@ -112,6 +116,7 @@ mod tests {
                 seq: seq as u64,
                 rtt: self.rtt,
                 timestamp: Instant::now(),
+                addr: None,
             }
         }
     }
