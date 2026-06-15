@@ -10,6 +10,8 @@ Keybindings:
   Down / j   Next hop
   p          Pause/resume
   h / ?      Toggle this help
+  Tab        Next target
+  Shift+Tab  Previous target
   r          Reset statistics
   g          Toggle graph"
 }
@@ -33,7 +35,7 @@ mod tests {
     #[test]
     fn help_text_contains_all_keybindings() {
         let text = help_text();
-        for key in ["q", "Esc", "Up", "k", "Down", "j", "p", "h", "?", "r", "g"] {
+        for key in ["q", "Esc", "Up", "k", "Down", "j", "p", "h", "?", "Tab", "r", "g"] {
             assert!(
                 text.contains(key),
                 "help text missing keybinding: {key}"

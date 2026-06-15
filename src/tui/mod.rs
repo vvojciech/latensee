@@ -28,16 +28,34 @@ pub struct AppState {
     pub paused: bool,
     pub show_help: bool,
     pub should_quit: bool,
+    pub active_target: usize,
+    pub target_count: usize,
 }
 
 impl AppState {
-    pub fn new() -> Self {
+    pub fn new(target_count: usize) -> Self {
         Self {
             selected_hop: 0,
             paused: false,
             show_help: false,
             should_quit: false,
+            active_target: 0,
+            target_count: target_count.max(1),
         }
+    }
+
+    pub fn next_target(&mut self) {
+        self.active_target = (self.active_target + 1) % self.target_count;
+        self.selected_hop = 0;
+    }
+
+    pub fn prev_target(&mut self) {
+        self.active_target = if self.active_target == 0 {
+            self.target_count - 1
+        } else {
+            self.active_target - 1
+        };
+        self.selected_hop = 0;
     }
 
     pub fn next_hop(&mut self, max: usize) {
@@ -94,6 +112,8 @@ pub fn handle_key_event(key: KeyEvent, app: &mut AppState, max_hops: usize) {
         KeyCode::Down | KeyCode::Char('j') => app.next_hop(max_hops),
         KeyCode::Char('p') => app.toggle_pause(),
         KeyCode::Char('h') | KeyCode::Char('?') => app.toggle_help(),
+        KeyCode::Tab => app.next_target(),
+        KeyCode::BackTab => app.prev_target(),
         KeyCode::Char('r') => {} // reserved: reset stats
         KeyCode::Char('g') => {} // reserved: graph toggle
         _ => {}
@@ -149,7 +169,8 @@ pub fn render_frame(frame: &mut Frame, state: &TraceState, app: &AppState) {
     };
 
     // Summary bar
-    frame.render_widget(summary_widget(state, app.paused), chunks[0]);
+    let target_index = Some((app.active_target, app.target_count));
+    frame.render_widget(summary_widget(state, app.paused, target_index), chunks[0]);
 
     // Hop table with rows
     let rows = build_hop_table_rows(&state.hops, app.selected_hop);
@@ -197,13 +218,13 @@ const TICK_RATE: Duration = Duration::from_millis(67); // ~15fps
 
 /// Main TUI event loop.
 pub async fn run_tui(
-    state: Arc<RwLock<TraceState>>,
+    states: Vec<Arc<RwLock<TraceState>>>,
     cancel: CancellationToken,
 ) -> Result<(), anyhow::Error> {
     let mut terminal = setup_terminal()?;
-    let mut app = AppState::new();
+    let mut app = AppState::new(states.len());
 
-    let result = run_event_loop(&mut terminal, &mut app, &state, &cancel).await;
+    let result = run_event_loop(&mut terminal, &mut app, &states, &cancel).await;
 
     restore_terminal(&mut terminal)?;
     result
@@ -212,13 +233,14 @@ pub async fn run_tui(
 async fn run_event_loop(
     terminal: &mut Terminal<CrosstermBackend<Stdout>>,
     app: &mut AppState,
-    state: &Arc<RwLock<TraceState>>,
+    states: &[Arc<RwLock<TraceState>>],
     cancel: &CancellationToken,
 ) -> Result<(), anyhow::Error> {
     let mut tick_interval = tokio::time::interval(TICK_RATE);
 
     loop {
-        // Render
+        // Render the active target
+        let state = &states[app.active_target];
         let trace_state = state.read().unwrap();
         let hop_count = trace_state.hop_count();
 
@@ -270,7 +292,7 @@ mod tests {
 
     #[test]
     fn app_state_defaults() {
-        let app = AppState::new();
+        let app = AppState::new(1);
         assert_eq!(app.selected_hop, 0);
         assert!(!app.paused);
         assert!(!app.show_help);
@@ -279,7 +301,7 @@ mod tests {
 
     #[test]
     fn next_hop_increments_within_bounds() {
-        let mut app = AppState::new();
+        let mut app = AppState::new(1);
         app.next_hop(5);
         assert_eq!(app.selected_hop, 1);
         app.next_hop(5);
@@ -288,7 +310,7 @@ mod tests {
 
     #[test]
     fn next_hop_clamps_at_max() {
-        let mut app = AppState::new();
+        let mut app = AppState::new(1);
         app.selected_hop = 4;
         app.next_hop(5);
         assert_eq!(app.selected_hop, 4, "should not exceed max - 1");
@@ -298,14 +320,14 @@ mod tests {
 
     #[test]
     fn next_hop_zero_max_is_noop() {
-        let mut app = AppState::new();
+        let mut app = AppState::new(1);
         app.next_hop(0);
         assert_eq!(app.selected_hop, 0);
     }
 
     #[test]
     fn prev_hop_decrements() {
-        let mut app = AppState::new();
+        let mut app = AppState::new(1);
         app.selected_hop = 3;
         app.prev_hop();
         assert_eq!(app.selected_hop, 2);
@@ -313,14 +335,14 @@ mod tests {
 
     #[test]
     fn prev_hop_clamps_at_zero() {
-        let mut app = AppState::new();
+        let mut app = AppState::new(1);
         app.prev_hop();
         assert_eq!(app.selected_hop, 0, "should not go below 0");
     }
 
     #[test]
     fn toggle_pause_flips() {
-        let mut app = AppState::new();
+        let mut app = AppState::new(1);
         assert!(!app.paused);
         app.toggle_pause();
         assert!(app.paused);
@@ -330,7 +352,7 @@ mod tests {
 
     #[test]
     fn toggle_help_flips() {
-        let mut app = AppState::new();
+        let mut app = AppState::new(1);
         assert!(!app.show_help);
         app.toggle_help();
         assert!(app.show_help);
@@ -340,35 +362,35 @@ mod tests {
 
     #[test]
     fn key_q_sets_should_quit() {
-        let mut app = AppState::new();
+        let mut app = AppState::new(1);
         handle_key_event(press(KeyCode::Char('q')), &mut app, 5);
         assert!(app.should_quit);
     }
 
     #[test]
     fn key_esc_sets_should_quit() {
-        let mut app = AppState::new();
+        let mut app = AppState::new(1);
         handle_key_event(press(KeyCode::Esc), &mut app, 5);
         assert!(app.should_quit);
     }
 
     #[test]
     fn key_down_increments_hop() {
-        let mut app = AppState::new();
+        let mut app = AppState::new(1);
         handle_key_event(press(KeyCode::Down), &mut app, 5);
         assert_eq!(app.selected_hop, 1);
     }
 
     #[test]
     fn key_j_increments_hop() {
-        let mut app = AppState::new();
+        let mut app = AppState::new(1);
         handle_key_event(press(KeyCode::Char('j')), &mut app, 5);
         assert_eq!(app.selected_hop, 1);
     }
 
     #[test]
     fn key_up_decrements_hop() {
-        let mut app = AppState::new();
+        let mut app = AppState::new(1);
         app.selected_hop = 2;
         handle_key_event(press(KeyCode::Up), &mut app, 5);
         assert_eq!(app.selected_hop, 1);
@@ -376,7 +398,7 @@ mod tests {
 
     #[test]
     fn key_k_decrements_hop() {
-        let mut app = AppState::new();
+        let mut app = AppState::new(1);
         app.selected_hop = 2;
         handle_key_event(press(KeyCode::Char('k')), &mut app, 5);
         assert_eq!(app.selected_hop, 1);
@@ -384,7 +406,7 @@ mod tests {
 
     #[test]
     fn key_p_toggles_pause() {
-        let mut app = AppState::new();
+        let mut app = AppState::new(1);
         handle_key_event(press(KeyCode::Char('p')), &mut app, 5);
         assert!(app.paused);
         handle_key_event(press(KeyCode::Char('p')), &mut app, 5);
@@ -393,21 +415,21 @@ mod tests {
 
     #[test]
     fn key_h_toggles_help() {
-        let mut app = AppState::new();
+        let mut app = AppState::new(1);
         handle_key_event(press(KeyCode::Char('h')), &mut app, 5);
         assert!(app.show_help);
     }
 
     #[test]
     fn key_question_mark_toggles_help() {
-        let mut app = AppState::new();
+        let mut app = AppState::new(1);
         handle_key_event(press(KeyCode::Char('?')), &mut app, 5);
         assert!(app.show_help);
     }
 
     #[test]
     fn release_events_are_ignored() {
-        let mut app = AppState::new();
+        let mut app = AppState::new(1);
         let release = KeyEvent {
             code: KeyCode::Char('q'),
             modifiers: KeyModifiers::NONE,
@@ -481,7 +503,7 @@ mod tests {
         let backend = TestBackend::new(80, 30);
         let mut terminal = Terminal::new(backend).unwrap();
         let state = make_trace_state();
-        let app = AppState::new();
+        let app = AppState::new(1);
 
         terminal
             .draw(|frame| {
@@ -498,7 +520,7 @@ mod tests {
         state.hops.push(make_hop_with_samples(1));
         state.hops.push(make_hop_with_samples(2));
         state.hops.push(make_hop_with_samples(3));
-        let mut app = AppState::new();
+        let mut app = AppState::new(1);
         app.selected_hop = 1;
 
         terminal
@@ -513,7 +535,7 @@ mod tests {
         let backend = TestBackend::new(80, 30);
         let mut terminal = Terminal::new(backend).unwrap();
         let state = make_trace_state();
-        let mut app = AppState::new();
+        let mut app = AppState::new(1);
         app.show_help = true;
 
         terminal
@@ -529,7 +551,7 @@ mod tests {
         let mut terminal = Terminal::new(backend).unwrap();
         let mut state = make_trace_state();
         state.hops.push(make_hop_with_samples(1));
-        let app = AppState::new();
+        let app = AppState::new(1);
 
         // Should not panic even with small terminal
         terminal
@@ -537,5 +559,65 @@ mod tests {
                 render_frame(frame, &state, &app);
             })
             .unwrap();
+    }
+
+    // --- target cycling tests ---
+
+    #[test]
+    fn tab_cycles_active_target_forward() {
+        let mut app = AppState::new(3);
+        assert_eq!(app.active_target, 0);
+        handle_key_event(press(KeyCode::Tab), &mut app, 5);
+        assert_eq!(app.active_target, 1);
+        handle_key_event(press(KeyCode::Tab), &mut app, 5);
+        assert_eq!(app.active_target, 2);
+    }
+
+    #[test]
+    fn shift_tab_cycles_active_target_backward() {
+        let mut app = AppState::new(3);
+        app.active_target = 2;
+        let shift_tab = KeyEvent {
+            code: KeyCode::BackTab,
+            modifiers: KeyModifiers::SHIFT,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        };
+        handle_key_event(shift_tab, &mut app, 5);
+        assert_eq!(app.active_target, 1);
+        handle_key_event(shift_tab, &mut app, 5);
+        assert_eq!(app.active_target, 0);
+    }
+
+    #[test]
+    fn active_target_wraps_forward() {
+        let mut app = AppState::new(3);
+        app.active_target = 2;
+        app.next_target();
+        assert_eq!(app.active_target, 0, "should wrap from last to first");
+    }
+
+    #[test]
+    fn active_target_wraps_backward() {
+        let mut app = AppState::new(3);
+        app.prev_target();
+        assert_eq!(app.active_target, 2, "should wrap from first to last");
+    }
+
+    #[test]
+    fn target_switch_resets_selected_hop() {
+        let mut app = AppState::new(3);
+        app.selected_hop = 5;
+        app.next_target();
+        assert_eq!(app.selected_hop, 0, "switching target should reset hop selection");
+    }
+
+    #[test]
+    fn single_target_tab_stays_at_zero() {
+        let mut app = AppState::new(1);
+        app.next_target();
+        assert_eq!(app.active_target, 0);
+        app.prev_target();
+        assert_eq!(app.active_target, 0);
     }
 }

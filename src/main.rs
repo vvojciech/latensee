@@ -6,6 +6,7 @@ mod tui;
 
 use clap::Parser;
 use std::sync::{Arc, RwLock};
+use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 #[tokio::main]
@@ -27,36 +28,45 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // Resolve first target to IP address
-    let target_str = &config.targets[0];
-    let addr = resolve_target(target_str, &config.ip_version).await?;
-    let target_info = trace::state::TargetInfo {
-        hostname: target_str.clone(),
-        addr,
-    };
+    // Resolve all targets to IP addresses
+    let mut states: Vec<Arc<RwLock<trace::state::TraceState>>> = Vec::new();
+    for target_str in &config.targets {
+        let addr = resolve_target(target_str, &config.ip_version).await?;
+        let target_info = trace::state::TargetInfo {
+            hostname: target_str.clone(),
+            addr,
+        };
+        let state = Arc::new(RwLock::new(trace::state::TraceState::new(
+            target_info,
+            config.max_hops,
+        )));
+        states.push(state);
+    }
 
-    let state = Arc::new(RwLock::new(trace::state::TraceState::new(
-        target_info,
-        config.max_hops,
-    )));
     let cancel = CancellationToken::new();
 
-    // Trace engine
-    let engine = trace::TraceEngine::new(Arc::clone(&state), &config);
-    let cancel_engine = cancel.clone();
-    let engine_handle = tokio::spawn(async move {
-        engine.run(cancel_engine).await;
-    });
+    // Spawn a trace engine per target
+    let mut engine_handles: Vec<JoinHandle<()>> = Vec::new();
+    for state in &states {
+        let engine = trace::TraceEngine::new(Arc::clone(state), &config);
+        let cancel_engine = cancel.clone();
+        engine_handles.push(tokio::spawn(async move {
+            engine.run(cancel_engine).await;
+        }));
+    }
 
-    // Background DNS resolver
-    let dns_state = Arc::clone(&state);
-    let no_dns = config.no_dns;
-    let cancel_dns = cancel.clone();
-    let dns_handle = tokio::spawn(async move {
-        if let Ok(resolver) = trace::dns::DnsResolver::new().await {
-            trace::dns::run_dns_resolver(dns_state, resolver, no_dns, cancel_dns).await;
-        }
-    });
+    // Spawn a DNS resolver per target
+    let mut dns_handles: Vec<JoinHandle<()>> = Vec::new();
+    for state in &states {
+        let dns_state = Arc::clone(state);
+        let no_dns = config.no_dns;
+        let cancel_dns = cancel.clone();
+        dns_handles.push(tokio::spawn(async move {
+            if let Ok(resolver) = trace::dns::DnsResolver::new().await {
+                trace::dns::run_dns_resolver(dns_state, resolver, no_dns, cancel_dns).await;
+            }
+        }));
+    }
 
     // Ctrl+C cancellation
     let cancel_ctrlc = cancel.clone();
@@ -66,32 +76,50 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     if config.report {
-        // Non-interactive: wait for engine to finish, then output
-        engine_handle.await?;
+        // Non-interactive: wait for all engines to finish, then output
+        for handle in engine_handles {
+            handle.await?;
+        }
         cancel.cancel();
-        dns_handle.await?;
+        for handle in dns_handles {
+            handle.await?;
+        }
 
-        let state = state.read().unwrap();
-        if config.csv {
-            print!("{}", report::csv_report::format_csv(&state));
-        } else if config.json {
-            println!("{}", report::json::format_json(&state));
-        } else {
-            report::text::print_report(&state);
+        let multi = states.len() > 1;
+        for (i, state) in states.iter().enumerate() {
+            if multi && i > 0 {
+                println!();
+            }
+            let state = state.read().unwrap();
+            if config.csv {
+                print!("{}", report::csv_report::format_csv(&state));
+            } else if config.json {
+                println!("{}", report::json::format_json(&state));
+            } else {
+                report::text::print_report(&state);
+            }
         }
     } else {
         // Interactive TUI
-        let tui_state = Arc::clone(&state);
         let cancel_tui = cancel.clone();
-        let tui_result = tui::run_tui(tui_state, cancel_tui).await;
+        let tui_result = tui::run_tui(states.clone(), cancel_tui).await;
 
         cancel.cancel();
-        engine_handle.await?;
-        dns_handle.await?;
+        for handle in engine_handles {
+            handle.await?;
+        }
+        for handle in dns_handles {
+            handle.await?;
+        }
 
         // Print summary after TUI exits
-        let state = state.read().unwrap();
-        report::text::print_report(&state);
+        for (i, state) in states.iter().enumerate() {
+            if i > 0 {
+                println!();
+            }
+            let state = state.read().unwrap();
+            report::text::print_report(&state);
+        }
 
         tui_result?;
     }
