@@ -47,7 +47,6 @@ impl Probe for IcmpProbe {
 
 pub struct UdpProbe {
     pub timeout: Duration,
-    pub size: u16,
     pub port: u16,
 }
 
@@ -62,7 +61,6 @@ impl Probe for UdpProbe {
 
 pub struct TcpProbe {
     pub timeout: Duration,
-    pub size: u16,
     pub port: u16,
 }
 
@@ -97,8 +95,8 @@ pub fn create_probe(
 ) -> Box<dyn Probe> {
     match protocol {
         ProbeProtocol::Icmp => Box::new(IcmpProbe::new(timeout, size)),
-        ProbeProtocol::Udp => Box::new(UdpProbe { timeout, size, port }),
-        ProbeProtocol::Tcp => Box::new(TcpProbe { timeout, size, port }),
+        ProbeProtocol::Udp => Box::new(UdpProbe { timeout, port }),
+        ProbeProtocol::Tcp => Box::new(TcpProbe { timeout, port }),
         ProbeProtocol::TcpConnect => Box::new(TcpConnectProbe { timeout, port }),
     }
 }
@@ -165,7 +163,6 @@ mod tests {
     async fn udp_probe_send_delegates_to_udp_module() {
         let probe = UdpProbe {
             timeout: Duration::from_secs(1),
-            size: 64,
             port: 33434,
         };
         let result = probe
@@ -179,7 +176,6 @@ mod tests {
     async fn tcp_probe_send_completes() {
         let probe = TcpProbe {
             timeout: Duration::from_secs(1),
-            size: 64,
             port: 80,
         };
         let result = probe
