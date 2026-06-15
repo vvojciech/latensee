@@ -57,6 +57,12 @@ sudo latensee --tcp -p 443 example.com
 
 # Non-interactive report as JSON
 sudo latensee --json -c 10 example.com
+
+# Without sudo (auto-falls back to TCP connect, target RTT only)
+latensee 8.8.8.8 -c 5
+
+# Explicit unprivileged TCP connect to port 443
+latensee --tcp-connect -p 443 example.com
 ```
 
 ## CLI flags
@@ -72,6 +78,7 @@ sudo latensee --json -c 10 example.com
 | `--icmp` | | default | Use ICMP echo probes |
 | `--udp` | | | Use UDP probes |
 | `--tcp` | | | Use TCP SYN probes |
+| `--tcp-connect` | | | Use unprivileged TCP connect probes (no root needed, target RTT only) |
 | `--port` | `-p` | 33434 (UDP), 80 (TCP) | Target port for UDP/TCP probes |
 | `--report` | | | Non-interactive output, print stats and exit |
 | `--csv` | | | CSV output (implies `--report`) |
@@ -80,7 +87,7 @@ sudo latensee --json -c 10 example.com
 | | `-4` | | Force IPv4 |
 | | `-6` | | Force IPv6 |
 
-Protocol flags (`--icmp`, `--udp`, `--tcp`) are mutually exclusive. Only one at a time.
+Protocol flags (`--icmp`, `--udp`, `--tcp`, `--tcp-connect`) are mutually exclusive. Only one at a time.
 
 ## TUI keybindings
 
@@ -106,6 +113,8 @@ The latency chart appears below the hop table when the terminal is tall enough (
 
 **TCP** (`--tcp`): Sends TCP SYN packets (default port 80). Useful for tracing the path to a specific service, or when both ICMP and UDP are filtered. Requires root/sudo.
 
+**TCP Connect** (`--tcp-connect`): Unprivileged TCP connect probes (default port 80). Measures target RTT without intermediate hops. No root/sudo needed. This is the automatic fallback when running without privileges.
+
 Pick ICMP first. Switch to TCP or UDP if you see timeouts on hops that you know are reachable.
 
 ## Output formats
@@ -120,10 +129,11 @@ With `--report`, it runs non-interactively for `--count` rounds (or until Ctrl+C
 
 ## Requirements
 
-**Privileges**: ICMP and TCP probes need raw sockets.
+**Privileges**: ICMP and TCP SYN probes need raw sockets.
 - macOS: run with `sudo`
 - Linux: run with `sudo`, or set capabilities: `sudo setcap cap_net_raw+ep $(which latensee)`
-- UDP probes may work without elevated privileges
+- Without root, latensee auto-falls back to TCP connect mode (target RTT only, no intermediate hops)
+- Use `--tcp-connect` explicitly to skip the privilege check
 
 **Platforms**: macOS and Linux.
 
