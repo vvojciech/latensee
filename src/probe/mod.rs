@@ -1,5 +1,6 @@
 pub mod icmp;
 pub mod socket;
+pub mod tcp;
 
 use std::net::IpAddr;
 use std::time::{Duration, Instant};
@@ -69,12 +70,8 @@ pub struct TcpProbe {
 
 #[async_trait]
 impl Probe for TcpProbe {
-    async fn send(&self, _target: IpAddr, _ttl: u8, seq: u16) -> ProbeResult {
-        ProbeResult {
-            seq: seq as u64,
-            rtt: None,
-            timestamp: Instant::now(),
-        }
+    async fn send(&self, target: IpAddr, ttl: u8, seq: u16) -> ProbeResult {
+        tcp::send_tcp_probe(target, ttl, seq, self.timeout, self.port).await
     }
 }
 
@@ -154,7 +151,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tcp_probe_stub_returns_none_rtt() {
+    #[ignore = "requires root: TCP probe uses raw sockets"]
+    async fn tcp_probe_send_completes() {
         let probe = TcpProbe {
             timeout: Duration::from_secs(1),
             size: 64,
@@ -163,7 +161,6 @@ mod tests {
         let result = probe
             .send(IpAddr::V4(Ipv4Addr::LOCALHOST), 5, 1)
             .await;
-        assert!(result.rtt.is_none(), "TCP stub should return None rtt");
         assert_eq!(result.seq, 1);
     }
 }
