@@ -126,7 +126,7 @@ async fn run_event_loop(
         terminal.draw(|frame| {
             let area = frame.area();
             let text = format!(
-                "pplot - tracing {} | round {} | hops: {} | hop: {} | {}",
+                "latensee - tracing {} | round {} | hops: {} | hop: {} | {}",
                 target,
                 round,
                 hop_count,

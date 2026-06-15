@@ -20,12 +20,12 @@ impl PrivilegeError {
 
     #[cfg(target_os = "macos")]
     fn platform_hint() -> &'static str {
-        "Run with sudo: sudo pplot <target>"
+        "Run with sudo: sudo latensee <target>"
     }
 
     #[cfg(target_os = "linux")]
     fn platform_hint() -> &'static str {
-        "Run with sudo or set capabilities: sudo setcap cap_net_raw+ep $(which pplot)"
+        "Run with sudo or set capabilities: sudo setcap cap_net_raw+ep $(which latensee)"
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
@@ -102,7 +102,7 @@ mod tests {
         );
 
         #[cfg(target_os = "macos")]
-        assert!(msg.contains("sudo pplot"), "macOS hint missing: {msg}");
+        assert!(msg.contains("sudo latensee"), "macOS hint missing: {msg}");
 
         #[cfg(target_os = "linux")]
         assert!(msg.contains("setcap"), "Linux hint missing: {msg}");

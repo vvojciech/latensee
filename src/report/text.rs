@@ -41,7 +41,7 @@ pub fn format_report(state: &TraceState) -> String {
 
     writeln!(
         out,
-        "pplot report for {} ({}) - {} rounds",
+        "latensee report for {} ({}) - {} rounds",
         state.target.hostname, state.target.addr, state.round
     )
     .unwrap();
@@ -210,7 +210,7 @@ mod tests {
     fn format_report_contains_header() {
         let state = sample_state();
         let report = format_report(&state);
-        assert!(report.contains("pplot report for example.com (93.184.216.34) - 47 rounds"));
+        assert!(report.contains("latensee report for example.com (93.184.216.34) - 47 rounds"));
         assert!(report.contains("Host"));
         assert!(report.contains("Loss%"));
         assert!(report.contains("Sent"));

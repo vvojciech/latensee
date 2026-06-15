@@ -1,8 +1,8 @@
 [package]
-name = "pplot"
+name = "latensee"
 version = "0.1.0"
 edition = "2021"
-description = "Continuous traceroute with per-hop latency visualization"
+description = "A PingPlotter-style CLI: continuous traceroute with per-hop latency visualization"
 license = "MIT"
 
 [dependencies]

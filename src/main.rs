@@ -5,5 +5,5 @@ mod trace;
 mod tui;
 
 fn main() {
-    println!("pplot - continuous traceroute with per-hop latency visualization");
+    println!("latensee - continuous traceroute with per-hop latency visualization");
 }

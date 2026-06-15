@@ -25,7 +25,7 @@ pub fn build_summary_text(state: &TraceState, paused: bool) -> String {
     let elapsed = format_elapsed(state.started_at);
     let pause_indicator = if paused { " PAUSED" } else { "" };
     format!(
-        "pplot - {} -- round {} -- {}{}",
+        "latensee - {} -- round {} -- {}{}",
         state.target, state.round, elapsed, pause_indicator
     )
 }

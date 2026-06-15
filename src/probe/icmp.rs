@@ -329,7 +329,7 @@ mod tests {
             1,
             Duration::from_secs(2),
             32,
-            0x7070, // "pp" for pplot
+            0x7070, // "pp" for latensee
         )
         .await;
 

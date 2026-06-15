@@ -18,7 +18,7 @@ pub enum IpVersion {
 
 /// Continuous traceroute with per-hop latency visualization.
 #[derive(Parser, Debug)]
-#[command(name = "pplot", version, about)]
+#[command(name = "latensee", version, about)]
 pub struct Args {
     /// Target hostnames or IP addresses
     #[arg(required = true)]
@@ -162,7 +162,7 @@ mod tests {
     use clap::Parser;
 
     fn parse(args: &[&str]) -> Args {
-        let mut full = vec!["pplot"];
+        let mut full = vec!["latensee"];
         full.extend_from_slice(args);
         Args::parse_from(full)
     }
