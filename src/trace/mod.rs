@@ -346,4 +346,26 @@ mod tests {
         let s = state.read().unwrap();
         assert_eq!(s.hops.len(), 3, "should probe all hops when target never responds");
     }
+
+    #[test]
+    fn lock_survives_panicked_writer() {
+        let target = TargetInfo {
+            hostname: "192.0.2.1".to_string(),
+            addr: IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)),
+        };
+        let state = Arc::new(RwLock::new(TraceState::new(target, 3)));
+        let state_clone = state.clone();
+
+        let handle = std::thread::spawn(move || {
+            let _guard = state_clone.write().unwrap();
+            panic!("simulated probe panic while holding write lock");
+        });
+
+        let _ = handle.join(); // thread panicked, lock is now poisoned with std RwLock
+
+        // With std::sync::RwLock this panics (poisoned lock).
+        // With parking_lot::RwLock this succeeds (no poisoning).
+        let s = state.read().unwrap();
+        assert_eq!(s.hop_count(), 0);
+    }
 }
