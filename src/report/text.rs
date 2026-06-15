@@ -48,8 +48,8 @@ pub fn format_report(state: &TraceState) -> String {
     writeln!(out).unwrap();
     writeln!(
         out,
-        "{:>2}  {:<28} {:>5}  {:>5} {:>5}  {:>5}  {:>5}  {:>5}  {:>5}  {:>5}",
-        "#", "Host", "Loss%", "Sent", "Rcvd", "Last", "Avg", "Best", "Wrst", "StDev"
+        "{:>2}  {:<28} {:>5}  {:>5} {:>5} {:>5}  {:>5}  {:>5}  {:>5}  {:>5}  {:>5}",
+        "#", "Host", "Loss%", "Sent", "Rcvd", "Errs", "Last", "Avg", "Best", "Wrst", "StDev"
     )
     .unwrap();
 
@@ -61,11 +61,16 @@ pub fn format_report(state: &TraceState) -> String {
         let best = format_rtt(hop.stats.min_rtt);
         let wrst = format_rtt(hop.stats.max_rtt);
         let stdev = format_jitter(hop.stats.jitter);
+        let errs = if hop.stats.errors > 0 {
+            hop.stats.errors.to_string()
+        } else {
+            "-".to_string()
+        };
 
         writeln!(
             out,
-            "{:>2}  {:<28} {:>5}  {:>5} {:>5}  {:>5}  {:>5}  {:>5}  {:>5}  {:>5}",
-            hop.ttl, host, loss, hop.stats.sent, hop.stats.received, last, avg, best, wrst, stdev
+            "{:>2}  {:<28} {:>5}  {:>5} {:>5} {:>5}  {:>5}  {:>5}  {:>5}  {:>5}  {:>5}",
+            hop.ttl, host, loss, hop.stats.sent, hop.stats.received, errs, last, avg, best, wrst, stdev
         )
         .unwrap();
     }

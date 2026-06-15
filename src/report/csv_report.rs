@@ -13,14 +13,14 @@ fn rtt_ms(d: Option<Duration>) -> String {
 
 /// Format trace state as CSV.
 ///
-/// Header: hop,host,loss_pct,sent,received,last_ms,avg_ms,best_ms,worst_ms,stdev_ms
+/// Header: hop,host,loss_pct,sent,received,errors,last_ms,avg_ms,best_ms,worst_ms,stdev_ms
 /// One row per hop. RTTs in ms (3dp). Host falls back: hostname > IP > "???".
 pub fn format_csv(state: &TraceState) -> String {
     let mut wtr = csv::Writer::from_writer(Vec::new());
 
     wtr.write_record([
-        "hop", "host", "loss_pct", "sent", "received", "last_ms", "avg_ms", "best_ms",
-        "worst_ms", "stdev_ms",
+        "hop", "host", "loss_pct", "sent", "received", "errors", "last_ms", "avg_ms",
+        "best_ms", "worst_ms", "stdev_ms",
     ])
     .expect("write header");
 
@@ -50,6 +50,7 @@ pub fn format_csv(state: &TraceState) -> String {
             &format!("{:.1}", hop.stats.loss_pct),
             &hop.stats.sent.to_string(),
             &hop.stats.received.to_string(),
+            &hop.stats.errors.to_string(),
             &rtt_ms(hop.stats.last_rtt),
             &avg_ms,
             &rtt_ms(hop.stats.min_rtt),
@@ -139,7 +140,7 @@ mod tests {
         let first_line = csv.lines().next().unwrap();
         assert_eq!(
             first_line,
-            "hop,host,loss_pct,sent,received,last_ms,avg_ms,best_ms,worst_ms,stdev_ms"
+            "hop,host,loss_pct,sent,received,errors,last_ms,avg_ms,best_ms,worst_ms,stdev_ms"
         );
     }
 
@@ -168,8 +169,9 @@ mod tests {
         assert_eq!(fields[0], "1");
         assert_eq!(fields[1], "???");
         assert_eq!(fields[2], "100.0");
-        // RTT fields (indices 5-9) should all be empty
-        for i in 5..=9 {
+        assert_eq!(fields[5], "0", "errors should be 0");
+        // RTT fields (indices 6-10) should all be empty
+        for i in 6..=10 {
             assert_eq!(fields[i], "", "field index {} should be empty", i);
         }
     }

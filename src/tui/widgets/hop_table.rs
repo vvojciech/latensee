@@ -46,6 +46,11 @@ pub fn build_hop_table_rows(hops: &[HopState], selected: usize) -> Vec<Row<'_>> 
                 Cell::from(format_host(hop)),
                 Cell::from(format!("{:.1}", hop.stats.loss_pct)),
                 Cell::from(hop.stats.sent.to_string()),
+                Cell::from(if hop.stats.errors > 0 {
+                    hop.stats.errors.to_string()
+                } else {
+                    "-".into()
+                }),
                 Cell::from(format_rtt_ms(hop.stats.last_rtt)),
                 Cell::from(format_us_to_ms(hop.stats.avg_rtt)),
                 Cell::from(format_rtt_ms(hop.stats.min_rtt)),
@@ -75,6 +80,7 @@ pub fn hop_table_widget(_selected: usize) -> Table<'static> {
         Cell::from("Host"),
         Cell::from("Loss%"),
         Cell::from("Sent"),
+        Cell::from("Errs"),
         Cell::from("Last"),
         Cell::from("Avg"),
         Cell::from("Best"),
@@ -92,6 +98,7 @@ pub fn hop_table_widget(_selected: usize) -> Table<'static> {
         Constraint::Min(20),
         Constraint::Length(7),
         Constraint::Length(6),
+        Constraint::Length(5),
         Constraint::Length(8),
         Constraint::Length(8),
         Constraint::Length(8),
