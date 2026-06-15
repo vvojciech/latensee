@@ -115,6 +115,7 @@ mod tests {
             ProbeResult {
                 rtt: self.rtt,
                 addr: None,
+                error: None,
             }
         }
     }
@@ -135,6 +136,7 @@ mod tests {
             ProbeResult {
                 rtt: Some(Duration::from_millis(ttl as u64)),
                 addr,
+                error: None,
             }
         }
     }

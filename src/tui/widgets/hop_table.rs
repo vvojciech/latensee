@@ -133,6 +133,7 @@ mod tests {
         let probe = ProbeResult {
             rtt: Some(Duration::from_micros(12300)),
             addr: None,
+            error: None,
         };
         hop.stats.record_probe(&probe);
         hop

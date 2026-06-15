@@ -38,7 +38,7 @@ pub async fn send_tcp_connect_probe(
         _ => (None, None),
     };
 
-    ProbeResult { rtt, addr }
+    ProbeResult { rtt, addr, error: None }
 }
 
 #[cfg(test)]

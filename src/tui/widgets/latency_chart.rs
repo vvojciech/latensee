@@ -74,6 +74,7 @@ mod tests {
         ProbeResult {
             rtt: rtt_us.map(Duration::from_micros),
             addr: None,
+            error: None,
         }
     }
 

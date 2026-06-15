@@ -115,6 +115,7 @@ mod tests {
                 max_rtt: Some(Duration::from_micros(20_000)),
                 avg_rtt: 13_500.0, // microseconds
                 jitter: 2_100.0,   // microseconds
+                errors: 0,
             },
         }
     }
@@ -150,7 +151,7 @@ mod tests {
                 min_rtt: None,
                 max_rtt: None,
                 avg_rtt: 0.0,
-                jitter: 0.0,
+                jitter: 0.0, errors: 0,
             },
         }
     }

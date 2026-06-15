@@ -40,11 +40,13 @@ pub struct HopStats {
     pub max_rtt: Option<Duration>,
     pub avg_rtt: f64,
     pub jitter: f64,
+    pub errors: u64,
 }
 
 pub struct ProbeResult {
     pub rtt: Option<Duration>,
     pub addr: Option<IpAddr>,
+    pub error: Option<String>,
 }
 
 impl HopStats {
@@ -59,11 +61,15 @@ impl HopStats {
             max_rtt: None,
             avg_rtt: 0.0,
             jitter: 0.0,
+            errors: 0,
         }
     }
 
     pub fn record_probe(&mut self, result: &ProbeResult) {
         self.sent += 1;
+        if result.error.is_some() {
+            self.errors += 1;
+        }
 
         match result.rtt {
             Some(rtt) => {
@@ -160,6 +166,7 @@ mod tests {
         ProbeResult {
             rtt: rtt_us.map(Duration::from_micros),
             addr: None,
+            error: None,
         }
     }
 
@@ -274,6 +281,30 @@ mod tests {
         assert_eq!(stats.min_rtt, Some(Duration::from_micros(1000)));
         assert_eq!(stats.max_rtt, Some(Duration::from_micros(9000)));
         assert_eq!(stats.last_rtt, None); // last probe was a timeout
+    }
+
+    #[test]
+    fn record_probe_with_error_increments_error_count() {
+        let mut stats = HopStats::new();
+        let probe = ProbeResult {
+            rtt: None,
+            addr: None,
+            error: Some("permission denied".into()),
+        };
+        stats.record_probe(&probe);
+
+        assert_eq!(stats.errors, 1);
+        assert_eq!(stats.lost, 1);
+        assert_eq!(stats.sent, 1);
+    }
+
+    #[test]
+    fn record_probe_timeout_has_no_error() {
+        let mut stats = HopStats::new();
+        stats.record_probe(&make_probe(None));
+
+        assert_eq!(stats.errors, 0);
+        assert_eq!(stats.lost, 1);
     }
 
     #[test]

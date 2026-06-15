@@ -492,6 +492,7 @@ mod tests {
             let probe = ProbeResult {
                 rtt: Some(Duration::from_micros(1000 + seq * 500)),
                 addr: None,
+                error: None,
             };
             hop.add_probe(probe, 50);
         }

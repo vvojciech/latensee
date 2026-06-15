@@ -116,7 +116,7 @@ mod tests {
                 min_rtt: min_ms.map(dur_ms),
                 max_rtt: max_ms.map(dur_ms),
                 avg_rtt: avg_us,
-                jitter: jitter_us,
+                jitter: jitter_us, errors: 0,
             },
         }
     }
