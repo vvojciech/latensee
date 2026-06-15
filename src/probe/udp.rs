@@ -205,12 +205,14 @@ pub async fn send_udp_probe(
     })
     .await;
 
-    let (rtt, addr) = match result {
-        Ok(Ok(Some((rtt, addr)))) => (Some(rtt), Some(addr)),
-        _ => (None, None),
+    let (rtt, addr, error) = match result {
+        Ok(Ok(Some((rtt, addr)))) => (Some(rtt), Some(addr), None),
+        Ok(Ok(None)) => (None, None, None),
+        Ok(Err(e)) => (None, None, Some(e.to_string())),
+        Err(_) => (None, None, Some("probe task panicked".into())),
     };
 
-    ProbeResult { rtt, addr, error: None }
+    ProbeResult { rtt, addr, error }
 }
 
 #[cfg(test)]
