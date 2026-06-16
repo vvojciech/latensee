@@ -12,17 +12,21 @@ use super::state::TraceState;
 /// Cache for reverse DNS results. Stores both positive and negative lookups.
 pub struct DnsCache {
     entries: HashMap<IpAddr, Option<String>>,
+    max_entries: usize,
 }
 
 impl DnsCache {
-    pub fn new() -> Self {
+    pub fn with_capacity(max_entries: usize) -> Self {
         Self {
             entries: HashMap::new(),
+            max_entries,
         }
     }
 
-    /// Insert a lookup result. `hostname` is None for negative (failed) lookups.
     pub fn insert(&mut self, addr: IpAddr, hostname: Option<String>) {
+        if self.entries.len() >= self.max_entries {
+            self.entries.clear();
+        }
         self.entries.insert(addr, hostname);
     }
 
@@ -43,7 +47,7 @@ impl DnsResolver {
         let resolver = Resolver::builder_tokio()?.build();
         Ok(Self {
             resolver,
-            cache: DnsCache::new(),
+            cache: DnsCache::with_capacity(256),
         })
     }
 
@@ -137,7 +141,7 @@ mod tests {
 
     #[test]
     fn dns_cache_stores_and_retrieves_positive_result() {
-        let mut cache = DnsCache::new();
+        let mut cache = DnsCache::with_capacity(256);
         let addr = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
         cache.insert(addr, Some("localhost".to_string()));
 
@@ -147,7 +151,7 @@ mod tests {
 
     #[test]
     fn dns_cache_stores_and_retrieves_negative_result() {
-        let mut cache = DnsCache::new();
+        let mut cache = DnsCache::with_capacity(256);
         let addr = IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1));
         cache.insert(addr, None);
 
@@ -157,11 +161,40 @@ mod tests {
 
     #[test]
     fn dns_cache_returns_none_for_uncached_address() {
-        let cache = DnsCache::new();
+        let cache = DnsCache::with_capacity(256);
         let addr = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
 
         let result = cache.get(&addr);
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn dns_cache_evicts_when_full() {
+        let mut cache = DnsCache::with_capacity(2);
+        let a1 = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
+        let a2 = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2));
+        let a3 = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 3));
+
+        cache.insert(a1, Some("one".into()));
+        cache.insert(a2, Some("two".into()));
+        cache.insert(a3, Some("three".into()));
+
+        assert!(cache.get(&a1).is_none(), "a1 should be evicted");
+        assert!(cache.get(&a2).is_none(), "a2 should be evicted");
+        assert!(cache.get(&a3).is_some(), "a3 should be present");
+    }
+
+    #[test]
+    fn dns_cache_within_capacity_preserves_entries() {
+        let mut cache = DnsCache::with_capacity(3);
+        let a1 = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
+        let a2 = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2));
+
+        cache.insert(a1, Some("one".into()));
+        cache.insert(a2, Some("two".into()));
+
+        assert!(cache.get(&a1).is_some());
+        assert!(cache.get(&a2).is_some());
     }
 
     #[tokio::test]
