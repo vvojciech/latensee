@@ -84,7 +84,7 @@ latensee --tcp-connect -p 443 example.com
 | `--csv` | | | CSV output (implies `--report`) |
 | `--json` | | | JSON output (implies `--report`) |
 | `--no-dns` | `-n` | | Skip reverse DNS lookups |
-| | `-4` | | Force IPv4 |
+| | `-4` | | Force IPv4 (default resolves both A and AAAA) |
 | | `-6` | | Force IPv6 |
 
 Protocol flags (`--icmp`, `--udp`, `--tcp`, `--tcp-connect`) are mutually exclusive. Only one at a time.
