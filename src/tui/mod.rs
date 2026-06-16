@@ -243,28 +243,33 @@ async fn run_event_loop(
     cancel: &CancellationToken,
 ) -> Result<(), anyhow::Error> {
     let mut tick_interval = tokio::time::interval(TICK_RATE);
+    let mut last_round: u64 = 0;
+    let mut needs_redraw = true;
 
     loop {
-        // Render the active target
         let state = &states[app.active_target];
         let trace_state = state.read();
         let hop_count = trace_state.hop_count();
+        let current_round = trace_state.round;
 
-        terminal.draw(|frame| {
-            render_frame(frame, &trace_state, app);
-        })?;
+        if needs_redraw || current_round != last_round {
+            terminal.draw(|frame| {
+                render_frame(frame, &trace_state, app);
+            })?;
+            last_round = current_round;
+            needs_redraw = false;
+        }
         drop(trace_state);
 
-        // Wait for next tick or event
         tokio::select! {
             _ = cancel.cancelled() => {
                 break;
             }
             _ = tick_interval.tick() => {
-                // Poll for crossterm events (non-blocking)
                 while event::poll(Duration::ZERO)? {
                     if let Event::Key(key) = event::read()? {
                         handle_key_event(key, app, hop_count);
+                        needs_redraw = true;
                     }
                 }
             }
