@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
@@ -22,7 +22,13 @@ use crate::trace::state::TraceState;
 use widgets::help::help_widget;
 use widgets::hop_table::{build_hop_table_rows, hop_table_widget};
 use widgets::latency_chart::{build_chart_dataset, build_latency_data, compute_y_bounds, latency_chart_title};
-use widgets::summary::summary_widget;
+use widgets::target_list::{build_target_list_rows, target_list_widget};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InputMode {
+    Normal,
+    AddTarget,
+}
 
 /// TUI application state, separate from trace data.
 pub struct AppState {
@@ -32,8 +38,13 @@ pub struct AppState {
     pub show_chart: bool,
     pub should_quit: bool,
     pub reset_requested: bool,
+    pub remove_requested: bool,
     pub active_target: usize,
     pub target_count: usize,
+    pub input_mode: InputMode,
+    pub input_buffer: String,
+    pub pending_target: Option<String>,
+    pub status_message: Option<String>,
     shared_paused: Arc<AtomicBool>,
 }
 
@@ -46,8 +57,13 @@ impl AppState {
             show_chart: true,
             should_quit: false,
             reset_requested: false,
+            remove_requested: false,
             active_target: 0,
             target_count: target_count.max(1),
+            input_mode: InputMode::Normal,
+            input_buffer: String::new(),
+            pending_target: None,
+            status_message: None,
             shared_paused,
         }
     }
@@ -119,16 +135,64 @@ pub fn handle_key_event(key: KeyEvent, app: &mut AppState, max_hops: usize) {
         return;
     }
 
+    match app.input_mode {
+        InputMode::AddTarget => handle_input_mode_key(key, app),
+        InputMode::Normal => handle_normal_mode_key(key, app, max_hops),
+    }
+}
+
+fn handle_normal_mode_key(key: KeyEvent, app: &mut AppState, max_hops: usize) {
+    app.status_message = None;
+    if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+        app.should_quit = true;
+        return;
+    }
     match key.code {
         KeyCode::Char('q') | KeyCode::Esc => app.should_quit = true,
-        KeyCode::Up | KeyCode::Char('k') => app.prev_hop(),
-        KeyCode::Down | KeyCode::Char('j') => app.next_hop(max_hops),
+        KeyCode::Up => app.prev_target(),
+        KeyCode::Down => app.next_target(),
+        KeyCode::Char('k') => app.prev_hop(),
+        KeyCode::Char('j') => app.next_hop(max_hops),
         KeyCode::Char('p') => app.toggle_pause(),
         KeyCode::Char('h') | KeyCode::Char('?') => app.toggle_help(),
-        KeyCode::Tab => app.next_target(),
-        KeyCode::BackTab => app.prev_target(),
         KeyCode::Char('r') => app.reset_requested = true,
         KeyCode::Char('g') => app.toggle_chart(),
+        KeyCode::Char('a') => {
+            app.input_mode = InputMode::AddTarget;
+            app.input_buffer.clear();
+        }
+        KeyCode::Char('d') | KeyCode::Char('x') => {
+            if app.target_count > 1 {
+                app.remove_requested = true;
+            }
+        }
+        _ => {}
+    }
+}
+
+fn handle_input_mode_key(key: KeyEvent, app: &mut AppState) {
+    if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+        app.should_quit = true;
+        return;
+    }
+    match key.code {
+        KeyCode::Esc => {
+            app.input_mode = InputMode::Normal;
+            app.input_buffer.clear();
+        }
+        KeyCode::Enter => {
+            if !app.input_buffer.is_empty() {
+                app.pending_target = Some(app.input_buffer.clone());
+            }
+            app.input_mode = InputMode::Normal;
+            app.input_buffer.clear();
+        }
+        KeyCode::Backspace => {
+            app.input_buffer.pop();
+        }
+        KeyCode::Char(c) => {
+            app.input_buffer.push(c);
+        }
         _ => {}
     }
 }
@@ -157,44 +221,53 @@ pub fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
         .split(popup_layout[1])[1]
 }
 
-/// Render the full TUI frame: summary bar, hop table, latency chart, and optional help overlay.
-pub fn render_frame(frame: &mut Frame, state: &TraceState, app: &AppState) {
+/// Render the full TUI frame: target list, hop table, latency chart, and optional help/input overlays.
+pub fn render_frame(
+    frame: &mut Frame,
+    states: &[Arc<RwLock<TraceState>>],
+    active_state: &TraceState,
+    app: &AppState,
+) {
     let area = frame.area();
     let show_chart = app.show_chart && area.height >= MIN_HEIGHT_FOR_CHART;
+    let show_input = app.input_mode != InputMode::Normal || app.status_message.is_some();
+    let target_list_height = (states.len() as u16).max(1) + 1; // +1 for header
 
-    let chunks = if show_chart {
-        Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(3),
-                Constraint::Percentage(50),
-                Constraint::Min(5),
-            ])
-            .split(area)
-    } else {
-        Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(3),
-                Constraint::Min(5),
-            ])
-            .split(area)
-    };
+    let mut constraints: Vec<Constraint> = vec![
+        Constraint::Length(target_list_height),
+        if show_chart {
+            Constraint::Percentage(50)
+        } else {
+            Constraint::Min(5)
+        },
+    ];
+    if show_chart {
+        constraints.push(Constraint::Min(5));
+    }
+    if show_input {
+        constraints.push(Constraint::Length(1));
+    }
 
-    // Summary bar
-    let target_index = Some((app.active_target, app.target_count));
-    frame.render_widget(summary_widget(state, app.paused, target_index), chunks[0]);
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints(constraints)
+        .split(area);
+
+    // Target list
+    let target_rows = build_target_list_rows(states, app.active_target, app.paused);
+    let target_table = target_list_widget().rows(target_rows);
+    frame.render_widget(target_table, chunks[0]);
 
     // Hop table with rows
-    let rows = build_hop_table_rows(&state.hops, app.selected_hop);
+    let rows = build_hop_table_rows(&active_state.hops, app.selected_hop);
     let table = hop_table_widget().rows(rows);
     frame.render_widget(table, chunks[1]);
 
     // Latency chart (only when tall enough and hops exist)
     if show_chart {
         let chart_chunk = chunks[2];
-        if !state.hops.is_empty() && app.selected_hop < state.hops.len() {
-            let hop = &state.hops[app.selected_hop];
+        if !active_state.hops.is_empty() && app.selected_hop < active_state.hops.len() {
+            let hop = &active_state.hops[app.selected_hop];
             let data = build_latency_data(hop);
             let (y_min, y_max) = compute_y_bounds(&data);
             let x_max = if data.is_empty() { 1.0 } else { data.len() as f64 };
@@ -219,6 +292,24 @@ pub fn render_frame(frame: &mut Frame, state: &TraceState, app: &AppState) {
         }
     }
 
+    // Input bar / status message
+    if show_input {
+        let input_chunk = chunks[chunks.len() - 1];
+        let text = match app.input_mode {
+            InputMode::AddTarget => format!("Add target: {}█", app.input_buffer),
+            InputMode::Normal => app.status_message.clone().unwrap_or_default(),
+        };
+        let style = if app.status_message.is_some() && app.input_mode == InputMode::Normal {
+            ratatui::style::Style::default().fg(ratatui::style::Color::Yellow)
+        } else {
+            ratatui::style::Style::default().fg(ratatui::style::Color::Cyan)
+        };
+        frame.render_widget(
+            ratatui::widgets::Paragraph::new(text).style(style),
+            input_chunk,
+        );
+    }
+
     // Help overlay
     if app.show_help {
         let help_area = centered_rect(60, 50, area);
@@ -229,16 +320,56 @@ pub fn render_frame(frame: &mut Frame, state: &TraceState, app: &AppState) {
 
 const TICK_RATE: Duration = Duration::from_millis(67); // ~15fps
 
+/// Configuration subset needed for spawning new trace engines at runtime.
+#[derive(Clone)]
+pub struct EngineConfig {
+    pub protocol: crate::config::ProbeProtocol,
+    pub timeout: f64,
+    pub size: u16,
+    pub port: u16,
+    pub interval: f64,
+    pub max_hops: u8,
+    pub count: Option<u64>,
+    pub no_dns: bool,
+    pub ip_version: crate::config::IpVersion,
+}
+
+impl EngineConfig {
+    pub fn from_config(config: &crate::config::Config) -> Self {
+        Self {
+            protocol: config.protocol,
+            timeout: config.timeout,
+            size: config.size,
+            port: config.port,
+            interval: config.interval,
+            max_hops: config.max_hops,
+            count: config.count,
+            no_dns: config.no_dns,
+            ip_version: config.ip_version,
+        }
+    }
+}
+
 /// Main TUI event loop.
 pub async fn run_tui(
     states: Vec<Arc<RwLock<TraceState>>>,
+    target_cancels: Vec<CancellationToken>,
     cancel: CancellationToken,
     paused: Arc<AtomicBool>,
+    engine_config: EngineConfig,
 ) -> Result<(), anyhow::Error> {
     let mut terminal = setup_terminal()?;
     let mut app = AppState::new(states.len(), paused);
 
-    let result = run_event_loop(&mut terminal, &mut app, &states, &cancel).await;
+    let result = run_event_loop(
+        &mut terminal,
+        &mut app,
+        states,
+        target_cancels,
+        &cancel,
+        &engine_config,
+    )
+    .await;
 
     restore_terminal(&mut terminal)?;
     result
@@ -247,8 +378,10 @@ pub async fn run_tui(
 async fn run_event_loop(
     terminal: &mut Terminal<CrosstermBackend<Stdout>>,
     app: &mut AppState,
-    states: &[Arc<RwLock<TraceState>>],
+    mut states: Vec<Arc<RwLock<TraceState>>>,
+    mut target_cancels: Vec<CancellationToken>,
     cancel: &CancellationToken,
+    engine_config: &EngineConfig,
 ) -> Result<(), anyhow::Error> {
     let mut tick_interval = tokio::time::interval(TICK_RATE);
     let mut last_round: u64 = 0;
@@ -262,7 +395,7 @@ async fn run_event_loop(
 
         if needs_redraw || current_round != last_round {
             terminal.draw(|frame| {
-                render_frame(frame, &trace_state, app);
+                render_frame(frame, &states, &trace_state, app);
             })?;
             last_round = current_round;
             needs_redraw = false;
@@ -291,10 +424,112 @@ async fn run_event_loop(
             needs_redraw = true;
         }
 
+        if let Some(target_str) = app.pending_target.take() {
+            match spawn_target(
+                &target_str,
+                engine_config,
+                cancel,
+                &app.shared_paused,
+                &mut states,
+                &mut target_cancels,
+            )
+            .await
+            {
+                Ok(()) => {
+                    app.target_count = states.len();
+                    app.active_target = states.len() - 1;
+                    app.selected_hop = 0;
+                    last_round = 0;
+                    app.status_message = None;
+                }
+                Err(e) => {
+                    app.status_message = Some(format!("Failed to add target: {e}"));
+                }
+            }
+            needs_redraw = true;
+        }
+
+        if app.remove_requested {
+            app.remove_requested = false;
+            if states.len() > 1 {
+                let idx = app.active_target;
+                target_cancels[idx].cancel();
+                states.remove(idx);
+                target_cancels.remove(idx);
+                app.target_count = states.len();
+                if app.active_target >= states.len() {
+                    app.active_target = states.len() - 1;
+                }
+                app.selected_hop = 0;
+                last_round = 0;
+                needs_redraw = true;
+            }
+        }
+
         if app.should_quit {
             break;
         }
     }
+
+    Ok(())
+}
+
+async fn spawn_target(
+    target_str: &str,
+    engine_config: &EngineConfig,
+    cancel: &CancellationToken,
+    paused: &Arc<AtomicBool>,
+    states: &mut Vec<Arc<RwLock<TraceState>>>,
+    target_cancels: &mut Vec<CancellationToken>,
+) -> Result<(), anyhow::Error> {
+    let addr = crate::config::resolve_target(target_str, &engine_config.ip_version).await?;
+    let target_info = crate::trace::state::TargetInfo {
+        hostname: target_str.to_string(),
+        addr,
+    };
+    let state = Arc::new(RwLock::new(crate::trace::state::TraceState::new(
+        target_info,
+        engine_config.max_hops,
+    )));
+    states.push(Arc::clone(&state));
+
+    let config = crate::config::Config {
+        targets: vec![target_str.to_string()],
+        interval: engine_config.interval,
+        max_hops: engine_config.max_hops,
+        count: engine_config.count,
+        size: engine_config.size,
+        timeout: engine_config.timeout,
+        protocol: engine_config.protocol,
+        port: engine_config.port,
+        report: false,
+        csv: false,
+        json: false,
+        no_dns: engine_config.no_dns,
+        ip_version: engine_config.ip_version,
+    };
+
+    let target_cancel = cancel.child_token();
+    target_cancels.push(target_cancel.clone());
+
+    let engine = crate::trace::TraceEngine::new(
+        Arc::clone(&state),
+        &config,
+        Arc::clone(paused),
+    );
+    let engine_cancel = target_cancel.clone();
+    tokio::spawn(async move {
+        engine.run(engine_cancel).await;
+    });
+
+    let dns_state = Arc::clone(&state);
+    let no_dns = engine_config.no_dns;
+    let dns_cancel = target_cancel;
+    tokio::spawn(async move {
+        if let Ok(resolver) = crate::trace::dns::DnsResolver::new().await {
+            crate::trace::dns::run_dns_resolver(dns_state, resolver, no_dns, dns_cancel).await;
+        }
+    });
 
     Ok(())
 }
@@ -402,24 +637,54 @@ mod tests {
     }
 
     #[test]
-    fn key_down_increments_hop() {
+    fn ctrl_c_sets_should_quit() {
         let mut app = AppState::new(1, Arc::new(AtomicBool::new(false)));
+        let ctrl_c = KeyEvent {
+            code: KeyCode::Char('c'),
+            modifiers: KeyModifiers::CONTROL,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        };
+        handle_key_event(ctrl_c, &mut app, 5);
+        assert!(app.should_quit);
+    }
+
+    #[test]
+    fn ctrl_c_in_input_mode_quits() {
+        let mut app = AppState::new(1, Arc::new(AtomicBool::new(false)));
+        app.input_mode = InputMode::AddTarget;
+        app.input_buffer = "8.8.8".to_string();
+        let ctrl_c = KeyEvent {
+            code: KeyCode::Char('c'),
+            modifiers: KeyModifiers::CONTROL,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        };
+        handle_key_event(ctrl_c, &mut app, 5);
+        assert!(app.should_quit);
+        assert_ne!(app.input_buffer, "8.8.8c", "should quit, not type 'c'");
+    }
+
+    #[test]
+    fn key_down_selects_next_target() {
+        let mut app = AppState::new(3, Arc::new(AtomicBool::new(false)));
+        assert_eq!(app.active_target, 0);
         handle_key_event(press(KeyCode::Down), &mut app, 5);
-        assert_eq!(app.selected_hop, 1);
+        assert_eq!(app.active_target, 1);
+    }
+
+    #[test]
+    fn key_up_selects_previous_target() {
+        let mut app = AppState::new(3, Arc::new(AtomicBool::new(false)));
+        app.active_target = 2;
+        handle_key_event(press(KeyCode::Up), &mut app, 5);
+        assert_eq!(app.active_target, 1);
     }
 
     #[test]
     fn key_j_increments_hop() {
         let mut app = AppState::new(1, Arc::new(AtomicBool::new(false)));
         handle_key_event(press(KeyCode::Char('j')), &mut app, 5);
-        assert_eq!(app.selected_hop, 1);
-    }
-
-    #[test]
-    fn key_up_decrements_hop() {
-        let mut app = AppState::new(1, Arc::new(AtomicBool::new(false)));
-        app.selected_hop = 2;
-        handle_key_event(press(KeyCode::Up), &mut app, 5);
         assert_eq!(app.selected_hop, 1);
     }
 
@@ -543,16 +808,23 @@ mod tests {
         hop
     }
 
+    fn make_states(count: usize) -> Vec<Arc<RwLock<TraceState>>> {
+        (0..count)
+            .map(|_| Arc::new(RwLock::new(make_trace_state())))
+            .collect()
+    }
+
     #[test]
     fn render_frame_empty_state_does_not_panic() {
         let backend = TestBackend::new(80, 30);
         let mut terminal = Terminal::new(backend).unwrap();
-        let state = make_trace_state();
+        let states = make_states(1);
+        let state = states[0].read();
         let app = AppState::new(1, Arc::new(AtomicBool::new(false)));
 
         terminal
             .draw(|frame| {
-                render_frame(frame, &state, &app);
+                render_frame(frame, &states, &state, &app);
             })
             .unwrap();
     }
@@ -561,16 +833,20 @@ mod tests {
     fn render_frame_with_hops_does_not_panic() {
         let backend = TestBackend::new(80, 30);
         let mut terminal = Terminal::new(backend).unwrap();
-        let mut state = make_trace_state();
-        state.hops.push(make_hop_with_samples(1));
-        state.hops.push(make_hop_with_samples(2));
-        state.hops.push(make_hop_with_samples(3));
+        let states = make_states(1);
+        {
+            let mut state = states[0].write();
+            state.hops.push(make_hop_with_samples(1));
+            state.hops.push(make_hop_with_samples(2));
+            state.hops.push(make_hop_with_samples(3));
+        }
+        let state = states[0].read();
         let mut app = AppState::new(1, Arc::new(AtomicBool::new(false)));
         app.selected_hop = 1;
 
         terminal
             .draw(|frame| {
-                render_frame(frame, &state, &app);
+                render_frame(frame, &states, &state, &app);
             })
             .unwrap();
     }
@@ -579,13 +855,14 @@ mod tests {
     fn render_frame_with_help_overlay_does_not_panic() {
         let backend = TestBackend::new(80, 30);
         let mut terminal = Terminal::new(backend).unwrap();
-        let state = make_trace_state();
+        let states = make_states(1);
+        let state = states[0].read();
         let mut app = AppState::new(1, Arc::new(AtomicBool::new(false)));
         app.show_help = true;
 
         terminal
             .draw(|frame| {
-                render_frame(frame, &state, &app);
+                render_frame(frame, &states, &state, &app);
             })
             .unwrap();
     }
@@ -594,48 +871,45 @@ mod tests {
     fn render_frame_short_terminal_skips_chart() {
         let backend = TestBackend::new(80, 15); // below MIN_HEIGHT_FOR_CHART
         let mut terminal = Terminal::new(backend).unwrap();
-        let mut state = make_trace_state();
-        state.hops.push(make_hop_with_samples(1));
+        let states = make_states(1);
+        {
+            let mut state = states[0].write();
+            state.hops.push(make_hop_with_samples(1));
+        }
+        let state = states[0].read();
         let app = AppState::new(1, Arc::new(AtomicBool::new(false)));
 
-        // Should not panic even with small terminal
         terminal
             .draw(|frame| {
-                render_frame(frame, &state, &app);
+                render_frame(frame, &states, &state, &app);
             })
             .unwrap();
     }
 
-    // --- target cycling tests ---
+    // --- target selection tests ---
 
     #[test]
-    fn tab_cycles_active_target_forward() {
+    fn arrow_down_cycles_target_forward() {
         let mut app = AppState::new(3, Arc::new(AtomicBool::new(false)));
         assert_eq!(app.active_target, 0);
-        handle_key_event(press(KeyCode::Tab), &mut app, 5);
+        handle_key_event(press(KeyCode::Down), &mut app, 5);
         assert_eq!(app.active_target, 1);
-        handle_key_event(press(KeyCode::Tab), &mut app, 5);
+        handle_key_event(press(KeyCode::Down), &mut app, 5);
         assert_eq!(app.active_target, 2);
     }
 
     #[test]
-    fn shift_tab_cycles_active_target_backward() {
+    fn arrow_up_cycles_target_backward() {
         let mut app = AppState::new(3, Arc::new(AtomicBool::new(false)));
         app.active_target = 2;
-        let shift_tab = KeyEvent {
-            code: KeyCode::BackTab,
-            modifiers: KeyModifiers::SHIFT,
-            kind: KeyEventKind::Press,
-            state: KeyEventState::NONE,
-        };
-        handle_key_event(shift_tab, &mut app, 5);
+        handle_key_event(press(KeyCode::Up), &mut app, 5);
         assert_eq!(app.active_target, 1);
-        handle_key_event(shift_tab, &mut app, 5);
+        handle_key_event(press(KeyCode::Up), &mut app, 5);
         assert_eq!(app.active_target, 0);
     }
 
     #[test]
-    fn active_target_wraps_forward() {
+    fn target_selection_wraps_forward() {
         let mut app = AppState::new(3, Arc::new(AtomicBool::new(false)));
         app.active_target = 2;
         app.next_target();
@@ -643,7 +917,7 @@ mod tests {
     }
 
     #[test]
-    fn active_target_wraps_backward() {
+    fn target_selection_wraps_backward() {
         let mut app = AppState::new(3, Arc::new(AtomicBool::new(false)));
         app.prev_target();
         assert_eq!(app.active_target, 2, "should wrap from first to last");
@@ -658,11 +932,185 @@ mod tests {
     }
 
     #[test]
-    fn single_target_tab_stays_at_zero() {
+    fn single_target_arrows_stay_at_zero() {
         let mut app = AppState::new(1, Arc::new(AtomicBool::new(false)));
         app.next_target();
         assert_eq!(app.active_target, 0);
         app.prev_target();
         assert_eq!(app.active_target, 0);
+    }
+
+    #[test]
+    fn tab_does_nothing() {
+        let mut app = AppState::new(3, Arc::new(AtomicBool::new(false)));
+        handle_key_event(press(KeyCode::Tab), &mut app, 5);
+        assert_eq!(app.active_target, 0, "Tab should not change target");
+        assert_eq!(app.selected_hop, 0, "Tab should not change hop");
+    }
+
+    // --- input mode tests ---
+
+    #[test]
+    fn key_a_enters_add_target_mode() {
+        let mut app = AppState::new(1, Arc::new(AtomicBool::new(false)));
+        assert_eq!(app.input_mode, InputMode::Normal);
+        handle_key_event(press(KeyCode::Char('a')), &mut app, 5);
+        assert_eq!(app.input_mode, InputMode::AddTarget);
+        assert!(app.input_buffer.is_empty());
+    }
+
+    #[test]
+    fn input_mode_esc_cancels() {
+        let mut app = AppState::new(1, Arc::new(AtomicBool::new(false)));
+        app.input_mode = InputMode::AddTarget;
+        app.input_buffer = "8.8.8".to_string();
+        handle_key_event(press(KeyCode::Esc), &mut app, 5);
+        assert_eq!(app.input_mode, InputMode::Normal);
+        assert!(app.input_buffer.is_empty());
+        assert!(!app.should_quit, "Esc in input mode should not quit");
+    }
+
+    #[test]
+    fn input_mode_chars_append_to_buffer() {
+        let mut app = AppState::new(1, Arc::new(AtomicBool::new(false)));
+        app.input_mode = InputMode::AddTarget;
+        handle_key_event(press(KeyCode::Char('1')), &mut app, 5);
+        handle_key_event(press(KeyCode::Char('.')), &mut app, 5);
+        handle_key_event(press(KeyCode::Char('1')), &mut app, 5);
+        assert_eq!(app.input_buffer, "1.1");
+    }
+
+    #[test]
+    fn input_mode_backspace_removes_last_char() {
+        let mut app = AppState::new(1, Arc::new(AtomicBool::new(false)));
+        app.input_mode = InputMode::AddTarget;
+        app.input_buffer = "8.8.8".to_string();
+        handle_key_event(press(KeyCode::Backspace), &mut app, 5);
+        assert_eq!(app.input_buffer, "8.8.");
+    }
+
+    #[test]
+    fn input_mode_backspace_on_empty_is_noop() {
+        let mut app = AppState::new(1, Arc::new(AtomicBool::new(false)));
+        app.input_mode = InputMode::AddTarget;
+        handle_key_event(press(KeyCode::Backspace), &mut app, 5);
+        assert!(app.input_buffer.is_empty());
+    }
+
+    #[test]
+    fn input_mode_enter_with_empty_buffer_does_nothing() {
+        let mut app = AppState::new(1, Arc::new(AtomicBool::new(false)));
+        app.input_mode = InputMode::AddTarget;
+        handle_key_event(press(KeyCode::Enter), &mut app, 5);
+        assert_eq!(app.input_mode, InputMode::Normal);
+        assert!(app.pending_target.is_none());
+    }
+
+    #[test]
+    fn input_mode_enter_sets_pending_target() {
+        let mut app = AppState::new(1, Arc::new(AtomicBool::new(false)));
+        app.input_mode = InputMode::AddTarget;
+        app.input_buffer = "1.1.1.1".to_string();
+        handle_key_event(press(KeyCode::Enter), &mut app, 5);
+        assert_eq!(app.input_mode, InputMode::Normal);
+        assert_eq!(app.pending_target, Some("1.1.1.1".to_string()));
+        assert!(app.input_buffer.is_empty());
+    }
+
+    #[test]
+    fn input_mode_ignores_navigation_keys() {
+        let mut app = AppState::new(3, Arc::new(AtomicBool::new(false)));
+        app.input_mode = InputMode::AddTarget;
+        app.selected_hop = 2;
+        let initial_target = app.active_target;
+        handle_key_event(press(KeyCode::Up), &mut app, 5);
+        handle_key_event(press(KeyCode::Down), &mut app, 5);
+        handle_key_event(press(KeyCode::Tab), &mut app, 5);
+        assert_eq!(app.selected_hop, 2, "navigation should be ignored in input mode");
+        assert_eq!(app.active_target, initial_target);
+    }
+
+    #[test]
+    fn input_mode_q_does_not_quit() {
+        let mut app = AppState::new(1, Arc::new(AtomicBool::new(false)));
+        app.input_mode = InputMode::AddTarget;
+        handle_key_event(press(KeyCode::Char('q')), &mut app, 5);
+        assert!(!app.should_quit, "q in input mode should type 'q', not quit");
+        assert_eq!(app.input_buffer, "q");
+    }
+
+    // --- remove target tests ---
+
+    #[test]
+    fn key_d_sets_remove_requested() {
+        let mut app = AppState::new(3, Arc::new(AtomicBool::new(false)));
+        handle_key_event(press(KeyCode::Char('d')), &mut app, 5);
+        assert!(app.remove_requested);
+    }
+
+    #[test]
+    fn key_x_sets_remove_requested() {
+        let mut app = AppState::new(3, Arc::new(AtomicBool::new(false)));
+        handle_key_event(press(KeyCode::Char('x')), &mut app, 5);
+        assert!(app.remove_requested);
+    }
+
+    #[test]
+    fn key_d_ignored_with_single_target() {
+        let mut app = AppState::new(1, Arc::new(AtomicBool::new(false)));
+        handle_key_event(press(KeyCode::Char('d')), &mut app, 5);
+        assert!(!app.remove_requested, "cannot remove last target");
+    }
+
+    // --- render with input mode ---
+
+    #[test]
+    fn render_frame_input_mode_does_not_panic() {
+        let backend = TestBackend::new(80, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let states = make_states(1);
+        let state = states[0].read();
+        let mut app = AppState::new(1, Arc::new(AtomicBool::new(false)));
+        app.input_mode = InputMode::AddTarget;
+        app.input_buffer = "8.8.8.8".to_string();
+
+        terminal
+            .draw(|frame| {
+                render_frame(frame, &states, &state, &app);
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn render_frame_status_message_does_not_panic() {
+        let backend = TestBackend::new(80, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let states = make_states(1);
+        let state = states[0].read();
+        let mut app = AppState::new(1, Arc::new(AtomicBool::new(false)));
+        app.status_message = Some("Failed to add target: DNS error".to_string());
+
+        terminal
+            .draw(|frame| {
+                render_frame(frame, &states, &state, &app);
+            })
+            .unwrap();
+    }
+
+    // --- multi-target render tests ---
+
+    #[test]
+    fn render_frame_with_multiple_targets_does_not_panic() {
+        let backend = TestBackend::new(80, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let states = make_states(3);
+        let state = states[0].read();
+        let app = AppState::new(3, Arc::new(AtomicBool::new(false)));
+
+        terminal
+            .draw(|frame| {
+                render_frame(frame, &states, &state, &app);
+            })
+            .unwrap();
     }
 }

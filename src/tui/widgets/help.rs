@@ -5,13 +5,13 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 pub fn help_text() -> &'static str {
     "\
 Keybindings:
-  q / Esc    Quit
-  Up / k     Previous hop
-  Down / j   Next hop
+  q / Esc / Ctrl+C  Quit
+  Up / Down  Select target
+  j / k      Select hop
   p          Pause/resume probing
   h / ?      Toggle this help
-  Tab        Next target
-  Shift+Tab  Previous target
+  a          Add target
+  d / x      Remove target
   r          Reset statistics
   g          Toggle graph"
 }
@@ -35,7 +35,7 @@ mod tests {
     #[test]
     fn help_text_contains_all_keybindings() {
         let text = help_text();
-        for key in ["q", "Esc", "Up", "k", "Down", "j", "p", "h", "?", "Tab", "r", "g"] {
+        for key in ["q", "Esc", "Up", "Down", "j", "k", "p", "h", "?", "a", "d", "r", "g"] {
             assert!(
                 text.contains(key),
                 "help text missing keybinding: {key}"

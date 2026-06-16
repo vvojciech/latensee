@@ -5,22 +5,25 @@ A PingPlotter-style CLI. Continuous traceroute with per-hop latency visualizatio
 `latensee` runs repeated traceroutes to one or more targets, tracks per-hop statistics (loss, jitter, min/avg/max RTT), and plots latency over time in a live TUI. The name is a pun on "latency" + "see".
 
 ```
-+- latensee - example.com (93.184.216.34) --- round 47 --- 00:01:23 --------+
-|                                                                            |
-|  #  Host                   Loss%  Sent  Last   Avg   Best  Wrst  Std      |
-|  1  192.168.1.1 (router)    0.0%   47   1.2   1.1   0.8   2.3   0.3      |
-|  2  10.0.0.1                0.0%   47   8.4   8.2   7.1   12.3  1.1      |
-|  3  172.16.0.1              2.1%   47  14.2  13.8  11.5   22.7  2.4      |
-|  ...                                                                       |
-|                                                                            |
-|  -- Latency: hop 2 (10.0.0.1) ------------------------------------------ |
-|  12ms |          __     __                                                 |
-|   8ms | _--__---  -_--_  --__------__--_                                   |
-|   5ms |-                                ---                                |
-|       +---------------------------------------------- time ->              |
-|                                                                            |
-|  [q]uit  [up/dn]select  [p]ause  [h]elp  [Tab]target                     |
-+----------------------------------------------------------------------------+
++- latensee ---------------------------------------------------------------+
+|                                                                           |
+|  > example.com (93.184.216.34)     round 47  00:01:23                    |
+|    cloudflare.com (104.16.132.229) round 45  00:01:21                    |
+|                                                                           |
+|  #  Host                   Loss%  Sent Errs  Last   Avg   Best  Wrst StDev|
+|  1  192.168.1.1 (router)    0.0%   47    -   1.2   1.1   0.8   2.3   0.3 |
+|  2  10.0.0.1                0.0%   47    -   8.4   8.2   7.1  12.3   1.1 |
+|  3  172.16.0.1              2.1%   47    -  14.2  13.8  11.5  22.7   2.4 |
+|  ...                                                                      |
+|                                                                           |
+|  -- Latency: hop 2 (10.0.0.1) ----------------------------------------- |
+|  12ms |          __     __                                                |
+|   8ms | _--__---  -_--_  --__------__--_                                  |
+|   5ms |-                                ---                               |
+|       +---------------------------------------------- time ->             |
+|                                                                           |
+|  [q]uit  [up/dn]target  [j/k]hop  [p]ause  [h]elp  [a]dd  [d]elete     |
++---------------------------------------------------------------------------+
 ```
 
 ## Installation
@@ -46,7 +49,7 @@ cargo build --release
 # Basic traceroute with live TUI
 sudo latensee example.com
 
-# Multiple targets, switch between them with Tab
+# Multiple targets, all visible in list, Up/Down to switch
 sudo latensee 8.8.8.8 1.1.1.1 example.com
 
 # Fast probing, 20 rounds, then exit
@@ -93,15 +96,17 @@ Protocol flags (`--icmp`, `--udp`, `--tcp`, `--tcp-connect`) are mutually exclus
 
 | Key | Action |
 |-----|--------|
-| `q` / `Esc` | Quit |
-| `Up` / `k` | Select previous hop |
-| `Down` / `j` | Select next hop |
-| `p` | Pause/resume probing display |
+| `q` / `Esc` / `Ctrl+C` | Quit |
+| `Up` / `Down` | Select target |
+| `j` / `k` | Select next/previous hop |
+| `p` | Pause/resume probing |
 | `h` / `?` | Toggle help overlay |
-| `Tab` | Switch to next target |
-| `Shift+Tab` | Switch to previous target |
-| `r` | Reset statistics (reserved) |
-| `g` | Toggle graph view (reserved) |
+| `a` | Add target (type hostname/IP, press Enter) |
+| `d` / `x` | Remove active target |
+| `r` | Reset statistics |
+| `g` | Toggle latency chart |
+
+All targets are visible in a list at the top of the screen. Use Up/Down arrows to select which target's hops to view, and `j`/`k` to navigate hops within that target. Press `a` to add a new target at runtime, `d` to remove the selected one (can't remove the last).
 
 The latency chart appears below the hop table when the terminal is tall enough (20+ rows). On smaller terminals, you get the table only.
 
@@ -137,7 +142,7 @@ With `--report`, it runs non-interactively for `--count` rounds (or until Ctrl+C
 
 **Platforms**: macOS and Linux.
 
-**Rust**: 1.70+ (2021 edition).
+**Rust**: 2021 edition. See `Cargo.toml` for dependency requirements.
 
 ## License
 

@@ -163,6 +163,44 @@ impl Config {
     }
 }
 
+pub async fn resolve_target(
+    target: &str,
+    ip_version: &IpVersion,
+) -> anyhow::Result<std::net::IpAddr> {
+    if let Ok(addr) = target.parse::<std::net::IpAddr>() {
+        return Ok(addr);
+    }
+
+    let resolver = hickory_resolver::Resolver::builder_tokio()?.build();
+
+    match ip_version {
+        IpVersion::V6 => {
+            let response = resolver.ipv6_lookup(target).await?;
+            let addr = response
+                .iter()
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("No AAAA record found"))?;
+            Ok(std::net::IpAddr::V6(**addr))
+        }
+        IpVersion::V4 => {
+            let response = resolver.ipv4_lookup(target).await?;
+            let addr = response
+                .iter()
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("No A record found"))?;
+            Ok(std::net::IpAddr::V4(**addr))
+        }
+        IpVersion::Auto => {
+            let response = resolver.lookup_ip(target).await?;
+            let addr = response
+                .iter()
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("No A or AAAA record found"))?;
+            Ok(addr)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

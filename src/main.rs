@@ -44,7 +44,7 @@ async fn main() -> anyhow::Result<()> {
     // Resolve all targets to IP addresses
     let mut states: Vec<Arc<RwLock<trace::state::TraceState>>> = Vec::new();
     for target_str in &config.targets {
-        let addr = resolve_target(target_str, &config.ip_version).await?;
+        let addr = config::resolve_target(target_str, &config.ip_version).await?;
         let target_info = trace::state::TargetInfo {
             hostname: target_str.clone(),
             addr,
@@ -59,23 +59,28 @@ async fn main() -> anyhow::Result<()> {
     let cancel = CancellationToken::new();
     let paused = Arc::new(AtomicBool::new(false));
 
+    // Per-target cancellation tokens (children of global cancel)
+    let mut target_cancels: Vec<CancellationToken> = Vec::new();
+
     // Spawn a trace engine per target
     let mut engine_handles: Vec<JoinHandle<()>> = Vec::new();
     for state in &states {
+        let target_cancel = cancel.child_token();
         let engine =
             trace::TraceEngine::new(Arc::clone(state), &config, Arc::clone(&paused));
-        let cancel_engine = cancel.clone();
+        let engine_cancel = target_cancel.clone();
         engine_handles.push(tokio::spawn(async move {
-            engine.run(cancel_engine).await;
+            engine.run(engine_cancel).await;
         }));
+        target_cancels.push(target_cancel);
     }
 
     // Spawn a DNS resolver per target
     let mut dns_handles: Vec<JoinHandle<()>> = Vec::new();
-    for state in &states {
+    for (i, state) in states.iter().enumerate() {
         let dns_state = Arc::clone(state);
         let no_dns = config.no_dns;
-        let cancel_dns = cancel.clone();
+        let cancel_dns = target_cancels[i].clone();
         dns_handles.push(tokio::spawn(async move {
             if let Ok(resolver) = trace::dns::DnsResolver::new().await {
                 trace::dns::run_dns_resolver(dns_state, resolver, no_dns, cancel_dns).await;
@@ -117,7 +122,15 @@ async fn main() -> anyhow::Result<()> {
     } else {
         // Interactive TUI
         let cancel_tui = cancel.clone();
-        let tui_result = tui::run_tui(states.clone(), cancel_tui, paused).await;
+        let engine_config = tui::EngineConfig::from_config(&config);
+        let tui_result = tui::run_tui(
+            states.clone(),
+            target_cancels,
+            cancel_tui,
+            paused,
+            engine_config,
+        )
+        .await;
 
         cancel.cancel();
         for handle in engine_handles {
@@ -140,35 +153,4 @@ async fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
-}
-
-async fn resolve_target(
-    target: &str,
-    ip_version: &config::IpVersion,
-) -> anyhow::Result<std::net::IpAddr> {
-    // Direct IP address - no DNS needed
-    if let Ok(addr) = target.parse::<std::net::IpAddr>() {
-        return Ok(addr);
-    }
-
-    // DNS lookup using same resolver pattern as trace::dns
-    let resolver = hickory_resolver::Resolver::builder_tokio()?.build();
-
-    match ip_version {
-        config::IpVersion::V6 => {
-            let response = resolver.ipv6_lookup(target).await?;
-            let addr = response.iter().next().ok_or_else(|| anyhow::anyhow!("No AAAA record found"))?;
-            Ok(std::net::IpAddr::V6(**addr))
-        }
-        config::IpVersion::V4 => {
-            let response = resolver.ipv4_lookup(target).await?;
-            let addr = response.iter().next().ok_or_else(|| anyhow::anyhow!("No A record found"))?;
-            Ok(std::net::IpAddr::V4(**addr))
-        }
-        config::IpVersion::Auto => {
-            let response = resolver.lookup_ip(target).await?;
-            let addr = response.iter().next().ok_or_else(|| anyhow::anyhow!("No A or AAAA record found"))?;
-            Ok(addr)
-        }
-    }
 }

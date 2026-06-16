@@ -53,6 +53,34 @@ fn invalid_size_too_small_exits_nonzero() {
 }
 
 #[test]
+fn help_lists_all_documented_flags() {
+    cmd()
+        .arg("--help")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--icmp"))
+        .stdout(predicate::str::contains("--udp"))
+        .stdout(predicate::str::contains("--tcp-connect"))
+        .stdout(predicate::str::contains("--no-dns"))
+        .stdout(predicate::str::contains("--csv"))
+        .stdout(predicate::str::contains("--json"))
+        .stdout(predicate::str::contains("--max-hops"))
+        .stdout(predicate::str::contains("--timeout"))
+        .stdout(predicate::str::contains("--size"))
+        .stdout(predicate::str::contains("--count"))
+        .stdout(predicate::str::contains("--port"));
+}
+
+#[test]
+fn help_text_mentions_add_and_remove_target() {
+    // Verify the in-app help text (compiled into the binary) includes new keybindings.
+    // This is a compile-time check via the latensee library.
+    let help = latensee::tui::widgets::help::help_text();
+    assert!(help.contains("Add target"), "help should mention 'Add target'");
+    assert!(help.contains("Remove target"), "help should mention 'Remove target'");
+}
+
+#[test]
 #[ignore = "needs network and UDP socket"]
 fn report_mode_udp_localhost() {
     cmd()
