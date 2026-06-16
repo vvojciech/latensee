@@ -12,7 +12,7 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> anyhow::Result<()> {
     let args = config::Args::parse();
     let config = match config::Config::from_args(&args) {
         Ok(c) => c,
@@ -145,7 +145,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 async fn resolve_target(
     target: &str,
     ip_version: &config::IpVersion,
-) -> Result<std::net::IpAddr, Box<dyn std::error::Error>> {
+) -> anyhow::Result<std::net::IpAddr> {
     // Direct IP address - no DNS needed
     if let Ok(addr) = target.parse::<std::net::IpAddr>() {
         return Ok(addr);
@@ -157,12 +157,12 @@ async fn resolve_target(
     match ip_version {
         config::IpVersion::V6 => {
             let response = resolver.ipv6_lookup(target).await?;
-            let addr = response.iter().next().ok_or("No AAAA record found")?;
+            let addr = response.iter().next().ok_or_else(|| anyhow::anyhow!("No AAAA record found"))?;
             Ok(std::net::IpAddr::V6(**addr))
         }
         _ => {
             let response = resolver.ipv4_lookup(target).await?;
-            let addr = response.iter().next().ok_or("No A record found")?;
+            let addr = response.iter().next().ok_or_else(|| anyhow::anyhow!("No A record found"))?;
             Ok(std::net::IpAddr::V4(**addr))
         }
     }
