@@ -117,7 +117,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         // Interactive TUI
         let cancel_tui = cancel.clone();
-        let tui_result = tui::run_tui(states.clone(), cancel_tui).await;
+        let tui_result = tui::run_tui(states.clone(), cancel_tui, paused).await;
 
         cancel.cancel();
         for handle in engine_handles {

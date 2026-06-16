@@ -2,6 +2,7 @@ pub mod widgets;
 
 use std::io::Stdout;
 use parking_lot::RwLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -31,10 +32,11 @@ pub struct AppState {
     pub should_quit: bool,
     pub active_target: usize,
     pub target_count: usize,
+    shared_paused: Arc<AtomicBool>,
 }
 
 impl AppState {
-    pub fn new(target_count: usize) -> Self {
+    pub fn new(target_count: usize, shared_paused: Arc<AtomicBool>) -> Self {
         Self {
             selected_hop: 0,
             paused: false,
@@ -42,6 +44,7 @@ impl AppState {
             should_quit: false,
             active_target: 0,
             target_count: target_count.max(1),
+            shared_paused,
         }
     }
 
@@ -74,6 +77,7 @@ impl AppState {
 
     pub fn toggle_pause(&mut self) {
         self.paused = !self.paused;
+        self.shared_paused.store(self.paused, Ordering::Relaxed);
     }
 
     pub fn toggle_help(&mut self) {
@@ -221,9 +225,10 @@ const TICK_RATE: Duration = Duration::from_millis(67); // ~15fps
 pub async fn run_tui(
     states: Vec<Arc<RwLock<TraceState>>>,
     cancel: CancellationToken,
+    paused: Arc<AtomicBool>,
 ) -> Result<(), anyhow::Error> {
     let mut terminal = setup_terminal()?;
-    let mut app = AppState::new(states.len());
+    let mut app = AppState::new(states.len(), paused);
 
     let result = run_event_loop(&mut terminal, &mut app, &states, &cancel).await;
 
@@ -293,7 +298,7 @@ mod tests {
 
     #[test]
     fn app_state_defaults() {
-        let app = AppState::new(1);
+        let app = AppState::new(1, Arc::new(AtomicBool::new(false)));
         assert_eq!(app.selected_hop, 0);
         assert!(!app.paused);
         assert!(!app.show_help);
@@ -302,7 +307,7 @@ mod tests {
 
     #[test]
     fn next_hop_increments_within_bounds() {
-        let mut app = AppState::new(1);
+        let mut app = AppState::new(1, Arc::new(AtomicBool::new(false)));
         app.next_hop(5);
         assert_eq!(app.selected_hop, 1);
         app.next_hop(5);
@@ -311,7 +316,7 @@ mod tests {
 
     #[test]
     fn next_hop_clamps_at_max() {
-        let mut app = AppState::new(1);
+        let mut app = AppState::new(1, Arc::new(AtomicBool::new(false)));
         app.selected_hop = 4;
         app.next_hop(5);
         assert_eq!(app.selected_hop, 4, "should not exceed max - 1");
@@ -321,14 +326,14 @@ mod tests {
 
     #[test]
     fn next_hop_zero_max_is_noop() {
-        let mut app = AppState::new(1);
+        let mut app = AppState::new(1, Arc::new(AtomicBool::new(false)));
         app.next_hop(0);
         assert_eq!(app.selected_hop, 0);
     }
 
     #[test]
     fn prev_hop_decrements() {
-        let mut app = AppState::new(1);
+        let mut app = AppState::new(1, Arc::new(AtomicBool::new(false)));
         app.selected_hop = 3;
         app.prev_hop();
         assert_eq!(app.selected_hop, 2);
@@ -336,14 +341,14 @@ mod tests {
 
     #[test]
     fn prev_hop_clamps_at_zero() {
-        let mut app = AppState::new(1);
+        let mut app = AppState::new(1, Arc::new(AtomicBool::new(false)));
         app.prev_hop();
         assert_eq!(app.selected_hop, 0, "should not go below 0");
     }
 
     #[test]
     fn toggle_pause_flips() {
-        let mut app = AppState::new(1);
+        let mut app = AppState::new(1, Arc::new(AtomicBool::new(false)));
         assert!(!app.paused);
         app.toggle_pause();
         assert!(app.paused);
@@ -353,7 +358,7 @@ mod tests {
 
     #[test]
     fn toggle_help_flips() {
-        let mut app = AppState::new(1);
+        let mut app = AppState::new(1, Arc::new(AtomicBool::new(false)));
         assert!(!app.show_help);
         app.toggle_help();
         assert!(app.show_help);
@@ -363,35 +368,35 @@ mod tests {
 
     #[test]
     fn key_q_sets_should_quit() {
-        let mut app = AppState::new(1);
+        let mut app = AppState::new(1, Arc::new(AtomicBool::new(false)));
         handle_key_event(press(KeyCode::Char('q')), &mut app, 5);
         assert!(app.should_quit);
     }
 
     #[test]
     fn key_esc_sets_should_quit() {
-        let mut app = AppState::new(1);
+        let mut app = AppState::new(1, Arc::new(AtomicBool::new(false)));
         handle_key_event(press(KeyCode::Esc), &mut app, 5);
         assert!(app.should_quit);
     }
 
     #[test]
     fn key_down_increments_hop() {
-        let mut app = AppState::new(1);
+        let mut app = AppState::new(1, Arc::new(AtomicBool::new(false)));
         handle_key_event(press(KeyCode::Down), &mut app, 5);
         assert_eq!(app.selected_hop, 1);
     }
 
     #[test]
     fn key_j_increments_hop() {
-        let mut app = AppState::new(1);
+        let mut app = AppState::new(1, Arc::new(AtomicBool::new(false)));
         handle_key_event(press(KeyCode::Char('j')), &mut app, 5);
         assert_eq!(app.selected_hop, 1);
     }
 
     #[test]
     fn key_up_decrements_hop() {
-        let mut app = AppState::new(1);
+        let mut app = AppState::new(1, Arc::new(AtomicBool::new(false)));
         app.selected_hop = 2;
         handle_key_event(press(KeyCode::Up), &mut app, 5);
         assert_eq!(app.selected_hop, 1);
@@ -399,7 +404,7 @@ mod tests {
 
     #[test]
     fn key_k_decrements_hop() {
-        let mut app = AppState::new(1);
+        let mut app = AppState::new(1, Arc::new(AtomicBool::new(false)));
         app.selected_hop = 2;
         handle_key_event(press(KeyCode::Char('k')), &mut app, 5);
         assert_eq!(app.selected_hop, 1);
@@ -407,7 +412,7 @@ mod tests {
 
     #[test]
     fn key_p_toggles_pause() {
-        let mut app = AppState::new(1);
+        let mut app = AppState::new(1, Arc::new(AtomicBool::new(false)));
         handle_key_event(press(KeyCode::Char('p')), &mut app, 5);
         assert!(app.paused);
         handle_key_event(press(KeyCode::Char('p')), &mut app, 5);
@@ -416,21 +421,21 @@ mod tests {
 
     #[test]
     fn key_h_toggles_help() {
-        let mut app = AppState::new(1);
+        let mut app = AppState::new(1, Arc::new(AtomicBool::new(false)));
         handle_key_event(press(KeyCode::Char('h')), &mut app, 5);
         assert!(app.show_help);
     }
 
     #[test]
     fn key_question_mark_toggles_help() {
-        let mut app = AppState::new(1);
+        let mut app = AppState::new(1, Arc::new(AtomicBool::new(false)));
         handle_key_event(press(KeyCode::Char('?')), &mut app, 5);
         assert!(app.show_help);
     }
 
     #[test]
     fn release_events_are_ignored() {
-        let mut app = AppState::new(1);
+        let mut app = AppState::new(1, Arc::new(AtomicBool::new(false)));
         let release = KeyEvent {
             code: KeyCode::Char('q'),
             modifiers: KeyModifiers::NONE,
@@ -504,7 +509,7 @@ mod tests {
         let backend = TestBackend::new(80, 30);
         let mut terminal = Terminal::new(backend).unwrap();
         let state = make_trace_state();
-        let app = AppState::new(1);
+        let app = AppState::new(1, Arc::new(AtomicBool::new(false)));
 
         terminal
             .draw(|frame| {
@@ -521,7 +526,7 @@ mod tests {
         state.hops.push(make_hop_with_samples(1));
         state.hops.push(make_hop_with_samples(2));
         state.hops.push(make_hop_with_samples(3));
-        let mut app = AppState::new(1);
+        let mut app = AppState::new(1, Arc::new(AtomicBool::new(false)));
         app.selected_hop = 1;
 
         terminal
@@ -536,7 +541,7 @@ mod tests {
         let backend = TestBackend::new(80, 30);
         let mut terminal = Terminal::new(backend).unwrap();
         let state = make_trace_state();
-        let mut app = AppState::new(1);
+        let mut app = AppState::new(1, Arc::new(AtomicBool::new(false)));
         app.show_help = true;
 
         terminal
@@ -552,7 +557,7 @@ mod tests {
         let mut terminal = Terminal::new(backend).unwrap();
         let mut state = make_trace_state();
         state.hops.push(make_hop_with_samples(1));
-        let app = AppState::new(1);
+        let app = AppState::new(1, Arc::new(AtomicBool::new(false)));
 
         // Should not panic even with small terminal
         terminal
@@ -566,7 +571,7 @@ mod tests {
 
     #[test]
     fn tab_cycles_active_target_forward() {
-        let mut app = AppState::new(3);
+        let mut app = AppState::new(3, Arc::new(AtomicBool::new(false)));
         assert_eq!(app.active_target, 0);
         handle_key_event(press(KeyCode::Tab), &mut app, 5);
         assert_eq!(app.active_target, 1);
@@ -576,7 +581,7 @@ mod tests {
 
     #[test]
     fn shift_tab_cycles_active_target_backward() {
-        let mut app = AppState::new(3);
+        let mut app = AppState::new(3, Arc::new(AtomicBool::new(false)));
         app.active_target = 2;
         let shift_tab = KeyEvent {
             code: KeyCode::BackTab,
@@ -592,7 +597,7 @@ mod tests {
 
     #[test]
     fn active_target_wraps_forward() {
-        let mut app = AppState::new(3);
+        let mut app = AppState::new(3, Arc::new(AtomicBool::new(false)));
         app.active_target = 2;
         app.next_target();
         assert_eq!(app.active_target, 0, "should wrap from last to first");
@@ -600,14 +605,14 @@ mod tests {
 
     #[test]
     fn active_target_wraps_backward() {
-        let mut app = AppState::new(3);
+        let mut app = AppState::new(3, Arc::new(AtomicBool::new(false)));
         app.prev_target();
         assert_eq!(app.active_target, 2, "should wrap from first to last");
     }
 
     #[test]
     fn target_switch_resets_selected_hop() {
-        let mut app = AppState::new(3);
+        let mut app = AppState::new(3, Arc::new(AtomicBool::new(false)));
         app.selected_hop = 5;
         app.next_target();
         assert_eq!(app.selected_hop, 0, "switching target should reset hop selection");
@@ -615,7 +620,7 @@ mod tests {
 
     #[test]
     fn single_target_tab_stays_at_zero() {
-        let mut app = AppState::new(1);
+        let mut app = AppState::new(1, Arc::new(AtomicBool::new(false)));
         app.next_target();
         assert_eq!(app.active_target, 0);
         app.prev_target();
