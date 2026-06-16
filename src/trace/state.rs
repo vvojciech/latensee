@@ -136,6 +136,11 @@ impl HopState {
             self.samples.pop_front();
         }
     }
+
+    pub fn reset(&mut self) {
+        self.stats = HopStats::new();
+        self.samples.clear();
+    }
 }
 
 impl TraceState {
@@ -146,6 +151,13 @@ impl TraceState {
             round: 0,
             started_at: Instant::now(),
         }
+    }
+
+    pub fn reset_all(&mut self) {
+        for hop in &mut self.hops {
+            hop.reset();
+        }
+        self.round = 0;
     }
 
     pub fn ensure_hop(&mut self, ttl: u8) {
@@ -348,6 +360,22 @@ mod tests {
         hop.add_probe(ProbeResult { rtt: None, addr: None, error: None }, 10);
         assert_eq!(hop.addr, Some(addr), "timeout should not clear addr");
         assert_eq!(hop.hostname.as_deref(), Some("router.example.com"), "timeout should not clear hostname");
+    }
+
+    #[test]
+    fn reset_clears_stats_and_samples() {
+        let mut hop = HopState::new(3);
+        let addr = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
+        hop.add_probe(ProbeResult { rtt: Some(Duration::from_micros(5000)), addr: Some(addr), error: None }, 10);
+        hop.add_probe(ProbeResult { rtt: Some(Duration::from_micros(6000)), addr: Some(addr), error: None }, 10);
+        assert_eq!(hop.stats.sent, 2);
+        assert_eq!(hop.samples.len(), 2);
+
+        hop.reset();
+        assert_eq!(hop.stats.sent, 0);
+        assert_eq!(hop.stats.received, 0);
+        assert!(hop.samples.is_empty());
+        assert_eq!(hop.addr, Some(addr), "reset should preserve addr");
     }
 
     #[test]
