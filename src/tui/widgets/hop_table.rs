@@ -43,7 +43,7 @@ pub fn build_hop_table_rows(hops: &[HopState], selected: usize) -> Vec<Row<'_>> 
 }
 
 /// Create the Table widget shell with headers and column constraints.
-pub fn hop_table_widget(_selected: usize) -> Table<'static> {
+pub fn hop_table_widget() -> Table<'static> {
     let header = Row::new(vec![
         Cell::from("#"),
         Cell::from("Host"),

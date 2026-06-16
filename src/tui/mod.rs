@@ -187,7 +187,7 @@ pub fn render_frame(frame: &mut Frame, state: &TraceState, app: &AppState) {
 
     // Hop table with rows
     let rows = build_hop_table_rows(&state.hops, app.selected_hop);
-    let table = hop_table_widget(app.selected_hop).rows(rows);
+    let table = hop_table_widget().rows(rows);
     frame.render_widget(table, chunks[1]);
 
     // Latency chart (only when tall enough and hops exist)
