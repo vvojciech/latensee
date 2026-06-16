@@ -301,8 +301,8 @@ pub async fn send_tcp_probe(
             }
         };
         socket::set_ttl(&tcp_sock, ttl, ipv6)?;
-        socket::set_timeout(&tcp_sock, timeout)?;
-        socket::set_timeout(&icmp_sock, timeout)?;
+        tcp_sock.set_nonblocking(true)?;
+        icmp_sock.set_nonblocking(true)?;
 
         let packet = build_tcp_syn(src_port, port, source_ip, target, seq as u32);
         let dest: socket2::SockAddr = std::net::SocketAddr::new(target, 0).into();
@@ -314,11 +314,11 @@ pub async fn send_tcp_probe(
         let socks = (tcp_sock, icmp_sock);
 
         loop {
-            let elapsed = send_time.elapsed();
-            if elapsed >= timeout {
+            if send_time.elapsed() >= timeout {
                 return Ok::<(Option<(Duration, IpAddr)>, TcpSocketPair), std::io::Error>((None, socks));
             }
 
+            // Poll ICMP socket (time-exceeded from intermediate routers)
             match socks.1.recv_from(&mut recv_buf) {
                 Ok((n, peer_addr)) => {
                     let rtt = send_time.elapsed();
@@ -338,12 +338,11 @@ pub async fn send_tcp_probe(
                         return Ok((Some((rtt, hop_addr)), socks));
                     }
                 }
-                Err(e)
-                    if e.kind() == std::io::ErrorKind::WouldBlock
-                        || e.kind() == std::io::ErrorKind::TimedOut => {}
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
                 Err(e) => return Err(e),
             }
 
+            // Poll TCP socket (SYN-ACK or RST from target)
             match socks.0.recv_from(&mut recv_buf) {
                 Ok((n, _addr)) => {
                     let rtt = send_time.elapsed();
@@ -357,14 +356,11 @@ pub async fn send_tcp_probe(
                         return Ok((Some((rtt, hop_addr)), socks));
                     }
                 }
-                Err(e)
-                    if e.kind() == std::io::ErrorKind::WouldBlock
-                        || e.kind() == std::io::ErrorKind::TimedOut =>
-                {
-                    return Ok((None, socks));
-                }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
                 Err(e) => return Err(e),
             }
+
+            std::thread::sleep(Duration::from_millis(1));
         }
     })
     .await;
