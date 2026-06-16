@@ -160,10 +160,15 @@ async fn resolve_target(
             let addr = response.iter().next().ok_or_else(|| anyhow::anyhow!("No AAAA record found"))?;
             Ok(std::net::IpAddr::V6(**addr))
         }
-        _ => {
+        config::IpVersion::V4 => {
             let response = resolver.ipv4_lookup(target).await?;
             let addr = response.iter().next().ok_or_else(|| anyhow::anyhow!("No A record found"))?;
             Ok(std::net::IpAddr::V4(**addr))
+        }
+        config::IpVersion::Auto => {
+            let response = resolver.lookup_ip(target).await?;
+            let addr = response.iter().next().ok_or_else(|| anyhow::anyhow!("No A or AAAA record found"))?;
+            Ok(addr)
         }
     }
 }
