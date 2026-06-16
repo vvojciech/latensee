@@ -1,40 +1,8 @@
 use std::fmt::Write;
-use std::time::Duration;
 
-use crate::trace::state::{HopState, TraceState};
+use crate::trace::state::TraceState;
 
-fn format_rtt(d: Option<Duration>) -> String {
-    match d {
-        Some(dur) => format!("{:.1}", dur.as_secs_f64() * 1000.0),
-        None => "-".to_string(),
-    }
-}
-
-fn format_host(hop: &HopState) -> String {
-    if let Some(ref name) = hop.hostname {
-        name.clone()
-    } else if let Some(addr) = hop.addr {
-        addr.to_string()
-    } else {
-        "???".to_string()
-    }
-}
-
-fn format_avg(avg_us: f64) -> String {
-    if avg_us == 0.0 {
-        "-".to_string()
-    } else {
-        format!("{:.1}", avg_us / 1000.0)
-    }
-}
-
-fn format_jitter(jitter_us: f64) -> String {
-    if jitter_us == 0.0 {
-        "-".to_string()
-    } else {
-        format!("{:.1}", jitter_us / 1000.0)
-    }
-}
+use super::format::{format_host, format_rtt_ms, format_us_to_ms};
 
 pub fn format_report(state: &TraceState) -> String {
     let mut out = String::new();
@@ -56,11 +24,11 @@ pub fn format_report(state: &TraceState) -> String {
     for hop in &state.hops {
         let host = format_host(hop);
         let loss = format!("{:.1}%", hop.stats.loss_pct);
-        let last = format_rtt(hop.stats.last_rtt);
-        let avg = format_avg(hop.stats.avg_rtt);
-        let best = format_rtt(hop.stats.min_rtt);
-        let wrst = format_rtt(hop.stats.max_rtt);
-        let stdev = format_jitter(hop.stats.jitter);
+        let last = format_rtt_ms(hop.stats.last_rtt);
+        let avg = format_us_to_ms(hop.stats.avg_rtt);
+        let best = format_rtt_ms(hop.stats.min_rtt);
+        let wrst = format_rtt_ms(hop.stats.max_rtt);
+        let stdev = format_us_to_ms(hop.stats.jitter);
         let errs = if hop.stats.errors > 0 {
             hop.stats.errors.to_string()
         } else {
@@ -167,48 +135,6 @@ mod tests {
             round: 47,
             started_at: Instant::now(),
         }
-    }
-
-    #[test]
-    fn format_rtt_with_some_duration() {
-        let d = dur_ms(12.3);
-        assert_eq!(format_rtt(Some(d)), "12.3");
-    }
-
-    #[test]
-    fn format_rtt_with_none_returns_dash() {
-        assert_eq!(format_rtt(None), "-");
-    }
-
-    #[test]
-    fn format_host_with_hostname() {
-        let hop = make_hop(
-            1,
-            Some("192.168.1.1".parse().unwrap()),
-            Some("router"),
-            1, 1, 0.0, Some(1.0), 1000.0, Some(1.0), Some(1.0), 0.0,
-        );
-        assert_eq!(format_host(&hop), "router");
-    }
-
-    #[test]
-    fn format_host_with_addr_no_hostname() {
-        let hop = make_hop(
-            1,
-            Some("10.0.0.1".parse().unwrap()),
-            None,
-            1, 1, 0.0, Some(1.0), 1000.0, Some(1.0), Some(1.0), 0.0,
-        );
-        assert_eq!(format_host(&hop), "10.0.0.1");
-    }
-
-    #[test]
-    fn format_host_with_neither_returns_question_marks() {
-        let hop = make_hop(
-            1, None, None,
-            1, 0, 100.0, None, 0.0, None, None, 0.0,
-        );
-        assert_eq!(format_host(&hop), "???");
     }
 
     #[test]
