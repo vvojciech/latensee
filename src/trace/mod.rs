@@ -93,6 +93,7 @@ impl TraceEngine {
         let mut results = Vec::with_capacity(self.max_hops as usize);
 
         for ttl in 1..=self.max_hops {
+            // u16 wrapping is intentional: ICMP identifier disambiguates, TCP/UDP use random port bases
             let seq = (round * self.max_hops as u64 + ttl as u64) as u16;
             let result = self.probe.send(self.target, ttl, seq).await;
             let reached = result.addr == Some(self.target);
