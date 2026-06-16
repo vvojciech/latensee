@@ -71,7 +71,7 @@ fn csv_output_contains_header() {
         .timeout(std::time::Duration::from_secs(10))
         .assert()
         .success()
-        .stdout(predicate::str::contains("hop,host,loss_pct,sent,received,last_ms,avg_ms,best_ms,worst_ms,stdev_ms"));
+        .stdout(predicate::str::contains("hop,host,loss_pct,sent,received,errors,last_ms,avg_ms,best_ms,worst_ms,stdev_ms"));
 }
 
 #[test]
