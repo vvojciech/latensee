@@ -308,6 +308,46 @@ mod tests {
     }
 
     #[test]
+    fn add_probe_updates_addr_on_change() {
+        let mut hop = HopState::new(3);
+        let addr_a = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
+        let addr_b = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2));
+
+        hop.add_probe(ProbeResult { rtt: Some(Duration::from_millis(5)), addr: Some(addr_a), error: None }, 10);
+        assert_eq!(hop.addr, Some(addr_a));
+
+        hop.add_probe(ProbeResult { rtt: Some(Duration::from_millis(6)), addr: Some(addr_b), error: None }, 10);
+        assert_eq!(hop.addr, Some(addr_b), "addr should update when ECMP router changes");
+        assert!(hop.hostname.is_none(), "hostname should be cleared on addr change");
+    }
+
+    #[test]
+    fn add_probe_clears_hostname_on_addr_change() {
+        let mut hop = HopState::new(3);
+        let addr_a = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
+        let addr_b = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2));
+
+        hop.add_probe(ProbeResult { rtt: Some(Duration::from_millis(5)), addr: Some(addr_a), error: None }, 10);
+        hop.hostname = Some("router-a.example.com".into());
+
+        hop.add_probe(ProbeResult { rtt: Some(Duration::from_millis(6)), addr: Some(addr_b), error: None }, 10);
+        assert!(hop.hostname.is_none(), "hostname should be cleared when addr changes");
+    }
+
+    #[test]
+    fn add_probe_timeout_does_not_clear_addr() {
+        let mut hop = HopState::new(3);
+        let addr = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
+
+        hop.add_probe(ProbeResult { rtt: Some(Duration::from_millis(5)), addr: Some(addr), error: None }, 10);
+        hop.hostname = Some("router.example.com".into());
+
+        hop.add_probe(ProbeResult { rtt: None, addr: None, error: None }, 10);
+        assert_eq!(hop.addr, Some(addr), "timeout should not clear addr");
+        assert_eq!(hop.hostname.as_deref(), Some("router.example.com"), "timeout should not clear hostname");
+    }
+
+    #[test]
     fn ensure_hop_grows_vec() {
         let target = TargetInfo {
             hostname: "example.com".to_string(),
