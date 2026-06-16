@@ -8,11 +8,11 @@ use crate::trace::state::HopState;
 use crate::tui::health::{health_fg, loss_health, rtt_health};
 
 /// Build table rows from hop state. The selected row gets a highlight style.
-pub fn build_hop_table_rows(
-    hops: &[HopState],
+pub fn build_hop_table_rows<'a>(
+    hops: &'a [HopState],
     selected: usize,
-    thresholds: &Thresholds,
-) -> Vec<Row<'_>> {
+    thresholds: &'a Thresholds,
+) -> Vec<Row<'a>> {
     hops.iter()
         .enumerate()
         .map(|(i, hop)| {
@@ -141,16 +141,17 @@ mod tests {
             make_hop_with_stats(2, None, Some(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)))),
             make_hop(3, None, None),
         ];
-        let rows = build_hop_table_rows(&hops, 0, &Thresholds::default());
+        let t = Thresholds::default();
+        let rows = build_hop_table_rows(&hops, 0, &t);
         assert_eq!(rows.len(), 3);
     }
 
     #[test]
     fn build_hop_table_rows_first_cell_is_ttl() {
         let hops = vec![make_hop(5, None, None)];
-        let rows = build_hop_table_rows(&hops, 0, &Thresholds::default());
+        let t = Thresholds::default();
+        let rows = build_hop_table_rows(&hops, 0, &t);
         assert_eq!(rows.len(), 1);
-        // Verify the hop TTL used in row construction
         assert_eq!(hops[0].ttl, 5);
     }
 }

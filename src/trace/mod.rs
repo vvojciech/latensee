@@ -182,6 +182,7 @@ mod tests {
             json: false,
             no_dns: true,
             ip_version: crate::config::IpVersion::Auto,
+            thresholds: crate::config::Thresholds::default(),
         }
     }
 

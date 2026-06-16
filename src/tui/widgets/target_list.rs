@@ -117,8 +117,7 @@ pub fn target_list_widget() -> Table<'static> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::trace::state::{HopState, HopStats, ProbeResult, TargetInfo};
-    use std::collections::VecDeque;
+    use crate::trace::state::{HopState, ProbeResult, TargetInfo};
     use std::net::{IpAddr, Ipv4Addr};
     use std::time::Duration;
 

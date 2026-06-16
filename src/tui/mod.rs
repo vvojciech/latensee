@@ -514,6 +514,7 @@ async fn spawn_target(
         json: false,
         no_dns: engine_config.no_dns,
         ip_version: engine_config.ip_version,
+        thresholds: engine_config.thresholds,
     };
 
     let target_cancel = cancel.child_token();
