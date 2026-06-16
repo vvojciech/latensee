@@ -5,8 +5,10 @@ use ratatui::widgets::{Cell, Row, Table};
 use std::sync::Arc;
 use std::time::Instant;
 
+use crate::config::Thresholds;
 use crate::report::format::{format_rtt_ms, format_us_to_ms};
 use crate::trace::state::TraceState;
+use crate::tui::health::{combined_health, health_fg, loss_health, rtt_health, HealthLevel};
 
 fn format_elapsed(started: Instant) -> String {
     let total_secs = started.elapsed().as_secs();
@@ -34,10 +36,24 @@ fn destination_summary(state: &TraceState) -> String {
     }
 }
 
+pub fn destination_health(state: &TraceState, thresholds: &Thresholds) -> HealthLevel {
+    let dest = state.hops.iter().rev().find(|h| h.stats.received > 0);
+    match dest {
+        Some(hop) => {
+            let rtt_ms = hop.stats.last_rtt.map(|d| d.as_secs_f64() * 1000.0);
+            let rtt = rtt_health(rtt_ms, thresholds);
+            let loss = loss_health(hop.stats.loss_pct, hop.stats.received, thresholds);
+            combined_health(rtt, loss)
+        }
+        None => HealthLevel::NoData,
+    }
+}
+
 pub fn build_target_list_rows(
     states: &[Arc<RwLock<TraceState>>],
     active: usize,
     paused: bool,
+    thresholds: &Thresholds,
 ) -> Vec<Row<'static>> {
     states
         .iter()
@@ -51,6 +67,8 @@ pub fn build_target_list_rows(
                 ""
             };
             let latency = destination_summary(&state);
+            let health = destination_health(&state, thresholds);
+            let fg = health_fg(health);
             let text = format!(
                 " {} {} ({})  round {}  {}{}{}",
                 marker,
@@ -66,12 +84,11 @@ pub fn build_target_list_rows(
             if i == active {
                 row.style(
                     Style::default()
-                        .fg(Color::Black)
-                        .bg(Color::Cyan)
+                        .fg(fg)
                         .add_modifier(Modifier::BOLD),
                 )
             } else {
-                row
+                row.style(Style::default().fg(fg))
             }
         })
         .collect()
@@ -143,14 +160,14 @@ mod tests {
     #[test]
     fn target_list_rows_match_state_count() {
         let states = make_states(3);
-        let rows = build_target_list_rows(&states, 0, false);
+        let rows = build_target_list_rows(&states, 0, false, &Thresholds::default());
         assert_eq!(rows.len(), 3);
     }
 
     #[test]
     fn single_target_shows_one_row() {
         let states = make_states(1);
-        let rows = build_target_list_rows(&states, 0, false);
+        let rows = build_target_list_rows(&states, 0, false, &Thresholds::default());
         assert_eq!(rows.len(), 1);
     }
 

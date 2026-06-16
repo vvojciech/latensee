@@ -89,8 +89,23 @@ latensee --tcp-connect -p 443 example.com
 | `--no-dns` | `-n` | | Skip reverse DNS lookups |
 | | `-4` | | Force IPv4 (default resolves both A and AAAA) |
 | | `-6` | | Force IPv6 |
+| `--rtt-warn` | | `50` | RTT warning threshold in ms (yellow) |
+| `--rtt-crit` | | `150` | RTT critical threshold in ms (red) |
+| `--loss-warn` | | `1` | Packet loss warning threshold in % (yellow) |
+| `--loss-crit` | | `5` | Packet loss critical threshold in % (red) |
 
 Protocol flags (`--icmp`, `--udp`, `--tcp`, `--tcp-connect`) are mutually exclusive. Only one at a time.
+
+## Stoplight colors
+
+The target list and hop table use color to show connection health at a glance:
+
+- **Green**: RTT below `--rtt-warn` and loss below `--loss-warn`
+- **Yellow**: RTT or loss above warning but below critical threshold
+- **Red**: RTT or loss above critical threshold
+- **Gray**: No data yet (waiting for first probe response)
+
+Loss% and Last RTT columns in the hop table are colored per-hop. Target list rows are colored based on the destination hop.
 
 ## TUI keybindings
 

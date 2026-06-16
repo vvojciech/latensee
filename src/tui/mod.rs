@@ -1,3 +1,4 @@
+pub mod health;
 pub mod widgets;
 
 use std::io::Stdout;
@@ -227,6 +228,7 @@ pub fn render_frame(
     states: &[Arc<RwLock<TraceState>>],
     active_state: &TraceState,
     app: &AppState,
+    thresholds: &crate::config::Thresholds,
 ) {
     let area = frame.area();
     let show_chart = app.show_chart && area.height >= MIN_HEIGHT_FOR_CHART;
@@ -255,14 +257,14 @@ pub fn render_frame(
         .split(area);
 
     // Target list
-    let target_rows = build_target_list_rows(states, app.active_target, app.paused);
+    let target_rows = build_target_list_rows(states, app.active_target, app.paused, thresholds);
     let target_table = target_list_widget().rows(target_rows);
     frame.render_widget(target_table, chunks[0]);
 
     // chunks[1] is the gap -- intentionally empty
 
     // Hop table with rows
-    let rows = build_hop_table_rows(&active_state.hops, app.selected_hop);
+    let rows = build_hop_table_rows(&active_state.hops, app.selected_hop, thresholds);
     let table = hop_table_widget().rows(rows);
     frame.render_widget(table, chunks[2]);
 
@@ -335,6 +337,7 @@ pub struct EngineConfig {
     pub count: Option<u64>,
     pub no_dns: bool,
     pub ip_version: crate::config::IpVersion,
+    pub thresholds: crate::config::Thresholds,
 }
 
 impl EngineConfig {
@@ -349,6 +352,7 @@ impl EngineConfig {
             count: config.count,
             no_dns: config.no_dns,
             ip_version: config.ip_version,
+            thresholds: config.thresholds,
         }
     }
 }
@@ -398,7 +402,7 @@ async fn run_event_loop(
 
         if needs_redraw || current_round != last_round {
             terminal.draw(|frame| {
-                render_frame(frame, &states, &trace_state, app);
+                render_frame(frame, &states, &trace_state, app, &engine_config.thresholds);
             })?;
             last_round = current_round;
             needs_redraw = false;
@@ -827,7 +831,7 @@ mod tests {
 
         terminal
             .draw(|frame| {
-                render_frame(frame, &states, &state, &app);
+                render_frame(frame, &states, &state, &app, &crate::config::Thresholds::default());
             })
             .unwrap();
     }
@@ -849,7 +853,7 @@ mod tests {
 
         terminal
             .draw(|frame| {
-                render_frame(frame, &states, &state, &app);
+                render_frame(frame, &states, &state, &app, &crate::config::Thresholds::default());
             })
             .unwrap();
     }
@@ -865,7 +869,7 @@ mod tests {
 
         terminal
             .draw(|frame| {
-                render_frame(frame, &states, &state, &app);
+                render_frame(frame, &states, &state, &app, &crate::config::Thresholds::default());
             })
             .unwrap();
     }
@@ -884,7 +888,7 @@ mod tests {
 
         terminal
             .draw(|frame| {
-                render_frame(frame, &states, &state, &app);
+                render_frame(frame, &states, &state, &app, &crate::config::Thresholds::default());
             })
             .unwrap();
     }
@@ -1079,7 +1083,7 @@ mod tests {
 
         terminal
             .draw(|frame| {
-                render_frame(frame, &states, &state, &app);
+                render_frame(frame, &states, &state, &app, &crate::config::Thresholds::default());
             })
             .unwrap();
     }
@@ -1095,7 +1099,7 @@ mod tests {
 
         terminal
             .draw(|frame| {
-                render_frame(frame, &states, &state, &app);
+                render_frame(frame, &states, &state, &app, &crate::config::Thresholds::default());
             })
             .unwrap();
     }
@@ -1112,7 +1116,7 @@ mod tests {
 
         terminal
             .draw(|frame| {
-                render_frame(frame, &states, &state, &app);
+                render_frame(frame, &states, &state, &app, &crate::config::Thresholds::default());
             })
             .unwrap();
     }

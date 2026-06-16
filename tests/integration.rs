@@ -68,7 +68,11 @@ fn help_lists_all_documented_flags() {
         .stdout(predicate::str::contains("--timeout"))
         .stdout(predicate::str::contains("--size"))
         .stdout(predicate::str::contains("--count"))
-        .stdout(predicate::str::contains("--port"));
+        .stdout(predicate::str::contains("--port"))
+        .stdout(predicate::str::contains("--rtt-warn"))
+        .stdout(predicate::str::contains("--rtt-crit"))
+        .stdout(predicate::str::contains("--loss-warn"))
+        .stdout(predicate::str::contains("--loss-crit"));
 }
 
 #[test]

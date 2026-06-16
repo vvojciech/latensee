@@ -88,6 +88,41 @@ pub struct Args {
     /// Force IPv6
     #[arg(short = '6')]
     pub ipv6: bool,
+
+    /// RTT warning threshold in ms (yellow)
+    #[arg(long = "rtt-warn", default_value = "50")]
+    pub rtt_warn: f64,
+
+    /// RTT critical threshold in ms (red)
+    #[arg(long = "rtt-crit", default_value = "150")]
+    pub rtt_crit: f64,
+
+    /// Packet loss warning threshold in % (yellow)
+    #[arg(long = "loss-warn", default_value = "1")]
+    pub loss_warn: f64,
+
+    /// Packet loss critical threshold in % (red)
+    #[arg(long = "loss-crit", default_value = "5")]
+    pub loss_crit: f64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Thresholds {
+    pub rtt_warn_ms: f64,
+    pub rtt_crit_ms: f64,
+    pub loss_warn_pct: f64,
+    pub loss_crit_pct: f64,
+}
+
+impl Default for Thresholds {
+    fn default() -> Self {
+        Self {
+            rtt_warn_ms: 50.0,
+            rtt_crit_ms: 150.0,
+            loss_warn_pct: 1.0,
+            loss_crit_pct: 5.0,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -105,6 +140,7 @@ pub struct Config {
     pub json: bool,
     pub no_dns: bool,
     pub ip_version: IpVersion,
+    pub thresholds: Thresholds,
 }
 
 impl Config {
@@ -159,6 +195,12 @@ impl Config {
             json: args.json,
             no_dns: args.no_dns,
             ip_version,
+            thresholds: Thresholds {
+                rtt_warn_ms: args.rtt_warn,
+                rtt_crit_ms: args.rtt_crit,
+                loss_warn_pct: args.loss_warn,
+                loss_crit_pct: args.loss_crit,
+            },
         })
     }
 }
