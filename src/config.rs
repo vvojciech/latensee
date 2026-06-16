@@ -108,15 +108,15 @@ pub struct Config {
 }
 
 impl Config {
-    pub fn from_args(args: &Args) -> Result<Self, String> {
+    pub fn from_args(args: &Args) -> anyhow::Result<Self> {
         if args.interval <= 0.0 {
-            return Err("interval must be greater than 0".into());
+            anyhow::bail!("interval must be greater than 0");
         }
         if args.timeout <= 0.0 {
-            return Err("timeout must be greater than 0".into());
+            anyhow::bail!("timeout must be greater than 0");
         }
         if args.size < 28 {
-            return Err("packet size must be at least 28 bytes".into());
+            anyhow::bail!("packet size must be at least 28 bytes");
         }
 
         let protocol = if args.tcp {
@@ -271,7 +271,7 @@ mod tests {
         let args = parse(&["example.com", "-i", "0"]);
         let result = Config::from_args(&args);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("interval"));
+        assert!(result.unwrap_err().to_string().contains("interval"));
     }
 
     #[test]
@@ -286,7 +286,7 @@ mod tests {
         let args = parse(&["example.com", "-t", "0"]);
         let result = Config::from_args(&args);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("timeout"));
+        assert!(result.unwrap_err().to_string().contains("timeout"));
     }
 
     #[test]
@@ -294,7 +294,7 @@ mod tests {
         let args = parse(&["example.com", "-s", "27"]);
         let result = Config::from_args(&args);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("28"));
+        assert!(result.unwrap_err().to_string().contains("28"));
     }
 
     #[test]
