@@ -235,6 +235,7 @@ pub fn render_frame(
 
     let mut constraints: Vec<Constraint> = vec![
         Constraint::Length(target_list_height),
+        Constraint::Length(1), // gap between target list and hop table
         if show_chart {
             Constraint::Percentage(50)
         } else {
@@ -258,14 +259,16 @@ pub fn render_frame(
     let target_table = target_list_widget().rows(target_rows);
     frame.render_widget(target_table, chunks[0]);
 
+    // chunks[1] is the gap -- intentionally empty
+
     // Hop table with rows
     let rows = build_hop_table_rows(&active_state.hops, app.selected_hop);
     let table = hop_table_widget().rows(rows);
-    frame.render_widget(table, chunks[1]);
+    frame.render_widget(table, chunks[2]);
 
     // Latency chart (only when tall enough and hops exist)
     if show_chart {
-        let chart_chunk = chunks[2];
+        let chart_chunk = chunks[3];
         if !active_state.hops.is_empty() && app.selected_hop < active_state.hops.len() {
             let hop = &active_state.hops[app.selected_hop];
             let data = build_latency_data(hop);

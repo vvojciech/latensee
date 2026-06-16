@@ -7,8 +7,8 @@ A PingPlotter-style CLI. Continuous traceroute with per-hop latency visualizatio
 ```
 +- latensee ---------------------------------------------------------------+
 |                                                                           |
-|  > example.com (93.184.216.34)     round 47  00:01:23                    |
-|    cloudflare.com (104.16.132.229) round 45  00:01:21                    |
+|  > example.com (93.184.216.34)     r47  00:01:23  last 12.3  avg 11.8  0%|
+|    cloudflare.com (104.16.132.229) r45  00:01:21  last  4.1  avg  4.0  0%|
 |                                                                           |
 |  #  Host                   Loss%  Sent Errs  Last   Avg   Best  Wrst StDev|
 |  1  192.168.1.1 (router)    0.0%   47    -   1.2   1.1   0.8   2.3   0.3 |
