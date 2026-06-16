@@ -20,11 +20,23 @@ pub enum TcpResponseType {
 
 const TCP_HEADER_LEN: usize = 20;
 
+/// Resolve the local source IP for a given target by connecting a UDP socket.
+pub fn resolve_source_ip(target: IpAddr) -> std::io::Result<IpAddr> {
+    let bind_addr: std::net::SocketAddr = if target.is_ipv6() {
+        "[::]:0".parse().unwrap()
+    } else {
+        "0.0.0.0:0".parse().unwrap()
+    };
+    let sock = std::net::UdpSocket::bind(bind_addr)?;
+    sock.connect(std::net::SocketAddr::new(target, 80))?;
+    Ok(sock.local_addr()?.ip())
+}
+
 /// Build a TCP SYN packet (header only, no payload).
 ///
 /// Returns raw bytes suitable for sending on a raw TCP socket.
-/// Computes the pseudo-header checksum for IPv4 targets.
-pub fn build_tcp_syn(src_port: u16, dst_port: u16, target: IpAddr, seq_num: u32) -> Vec<u8> {
+/// Computes the pseudo-header checksum using the provided source IP.
+pub fn build_tcp_syn(src_port: u16, dst_port: u16, src_ip: IpAddr, target: IpAddr, seq_num: u32) -> Vec<u8> {
     let mut buf = vec![0u8; TCP_HEADER_LEN];
 
     {
@@ -40,24 +52,20 @@ pub fn build_tcp_syn(src_port: u16, dst_port: u16, target: IpAddr, seq_num: u32)
         tcp.set_urgent_ptr(0);
     }
 
-    // Compute checksum with pseudo-header
-    match target {
-        IpAddr::V4(dst) => {
-            // Use 0.0.0.0 as source for checksum; the kernel fills the real source IP.
-            // For raw sockets with IP_HDRINCL off, this is standard practice.
-            let src = Ipv4Addr::UNSPECIFIED;
+    match (src_ip, target) {
+        (IpAddr::V4(src), IpAddr::V4(dst)) => {
             let tcp_packet = TcpPacket::new(&buf).expect("failed to parse TCP for checksum");
             let cksum = ipv4_checksum(&tcp_packet, &src, &dst);
             buf[16] = (cksum >> 8) as u8;
             buf[17] = (cksum & 0xFF) as u8;
         }
-        IpAddr::V6(dst) => {
-            let src = Ipv6Addr::UNSPECIFIED;
+        (IpAddr::V6(src), IpAddr::V6(dst)) => {
             let tcp_packet = TcpPacket::new(&buf).expect("failed to parse TCP for checksum");
             let cksum = ipv6_checksum(&tcp_packet, &src, &dst);
             buf[16] = (cksum >> 8) as u8;
             buf[17] = (cksum & 0xFF) as u8;
         }
+        _ => {}
     }
 
     buf
@@ -276,6 +284,7 @@ pub async fn send_tcp_probe(
     timeout: Duration,
     port: u16,
     port_base: u16,
+    source_ip: IpAddr,
     existing_socks: Option<TcpSocketPair>,
 ) -> (ProbeResult, Option<TcpSocketPair>) {
     let src_port = port_base.wrapping_add(seq);
@@ -295,7 +304,7 @@ pub async fn send_tcp_probe(
         socket::set_timeout(&tcp_sock, timeout)?;
         socket::set_timeout(&icmp_sock, timeout)?;
 
-        let packet = build_tcp_syn(src_port, port, target, seq as u32);
+        let packet = build_tcp_syn(src_port, port, source_ip, target, seq as u32);
         let dest: socket2::SockAddr = std::net::SocketAddr::new(target, 0).into();
 
         let send_time = Instant::now();
@@ -387,7 +396,7 @@ mod tests {
 
     #[test]
     fn build_tcp_syn_produces_valid_header_with_syn_flag() {
-        let packet = build_tcp_syn(30001, 80, IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1)), 42);
+        let packet = build_tcp_syn(30001, 80, IpAddr::V4(Ipv4Addr::UNSPECIFIED), IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1)),42);
 
         assert_eq!(packet.len(), TCP_HEADER_LEN, "TCP header should be 20 bytes");
 
@@ -407,7 +416,7 @@ mod tests {
 
     #[test]
     fn build_tcp_syn_has_correct_ports_and_seq() {
-        let packet = build_tcp_syn(30042, 443, IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)), 99);
+        let packet = build_tcp_syn(30042, 443, IpAddr::V4(Ipv4Addr::UNSPECIFIED), IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)),99);
 
         let tcp = TcpPacket::new(&packet).expect("should parse as valid TCP packet");
         assert_eq!(tcp.get_source(), 30042, "source port mismatch");
@@ -417,7 +426,7 @@ mod tests {
 
     #[test]
     fn build_tcp_syn_checksum_is_nonzero_v4() {
-        let packet = build_tcp_syn(30001, 80, IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1)), 1);
+        let packet = build_tcp_syn(30001, 80, IpAddr::V4(Ipv4Addr::UNSPECIFIED), IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1)),1);
         let tcp = TcpPacket::new(&packet).expect("should parse as valid TCP packet");
         assert_ne!(
             tcp.get_checksum(),
@@ -429,7 +438,8 @@ mod tests {
     #[test]
     fn build_tcp_syn_ipv6_uses_ipv6_checksum() {
         let target = IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1));
-        let packet = build_tcp_syn(30001, 80, target, 1);
+        let src = IpAddr::V6(Ipv6Addr::UNSPECIFIED);
+        let packet = build_tcp_syn(30001, 80, src, target, 1);
 
         let tcp = TcpPacket::new(&packet).expect("should parse as valid TCP packet");
         assert_ne!(
@@ -450,7 +460,8 @@ mod tests {
     #[test]
     fn build_tcp_syn_ipv6_has_syn_flag_and_correct_ports() {
         let target = IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1));
-        let packet = build_tcp_syn(30042, 443, target, 99);
+        let src = IpAddr::V6(Ipv6Addr::UNSPECIFIED);
+        let packet = build_tcp_syn(30042, 443, src, target, 99);
 
         let tcp = TcpPacket::new(&packet).expect("should parse as valid TCP packet");
         assert_ne!(tcp.get_flags() & TcpFlags::SYN, 0, "SYN flag must be set");
@@ -691,6 +702,7 @@ mod tests {
             Duration::from_secs(2),
             80,
             40000,
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
             None,
         )
         .await;
@@ -717,18 +729,14 @@ mod tests {
     }
 
     #[test]
-    fn tcp_checksum_depends_on_source_ip() {
+    fn tcp_checksum_uses_provided_source_ip() {
         let target = IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8));
-        let pkt1 = build_tcp_syn(30001, 80, target, 1);
-        let cksum1 = u16::from_be_bytes([pkt1[16], pkt1[17]]);
+        let src = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100));
+        let pkt = build_tcp_syn(30001, 80, src, target, 1);
+        let cksum = u16::from_be_bytes([pkt[16], pkt[17]]);
 
-        // With a different source IP, the checksum should differ
-        // (currently build_tcp_syn always uses 0.0.0.0, so this test
-        // documents that the checksum is wrong and will change when fixed)
-        let src_real = Ipv4Addr::new(192, 168, 1, 100);
-        let tcp = TcpPacket::new(&pkt1).unwrap();
-        let cksum_real = ipv4_checksum(&tcp, &src_real, &Ipv4Addr::new(8, 8, 8, 8));
-
-        assert_ne!(cksum1, cksum_real, "checksum with 0.0.0.0 differs from real source IP");
+        let tcp = TcpPacket::new(&pkt).unwrap();
+        let expected = ipv4_checksum(&tcp, &Ipv4Addr::new(192, 168, 1, 100), &Ipv4Addr::new(8, 8, 8, 8));
+        assert_eq!(cksum, expected, "checksum should use the provided source IP");
     }
 }

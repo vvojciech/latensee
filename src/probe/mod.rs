@@ -6,7 +6,7 @@ pub mod udp;
 
 use parking_lot::Mutex;
 use std::future::Future;
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::pin::Pin;
 use std::time::Duration;
 
@@ -83,6 +83,7 @@ pub struct TcpProbe {
     pub timeout: Duration,
     pub port: u16,
     pub port_base: u16,
+    pub source_ip: IpAddr,
     sockets: Mutex<Option<(socket2::Socket, socket2::Socket)>>,
 }
 
@@ -93,7 +94,7 @@ impl Probe for TcpProbe {
         Box::pin(async move {
             let socks = self.sockets.lock().take();
             let (result, returned_socks) =
-                tcp::send_tcp_probe(target, ttl, seq, self.timeout, self.port, self.port_base, socks)
+                tcp::send_tcp_probe(target, ttl, seq, self.timeout, self.port, self.port_base, self.source_ip, socks)
                     .await;
             *self.sockets.lock() = returned_socks;
             result
@@ -125,6 +126,7 @@ pub fn create_probe(
     timeout: Duration,
     size: u16,
     port: u16,
+    target: IpAddr,
 ) -> Box<dyn Probe> {
     match protocol {
         ProbeProtocol::Icmp => Box::new(IcmpProbe::new(timeout, size)),
@@ -133,12 +135,21 @@ pub fn create_probe(
             port,
             sockets: Mutex::new(None),
         }),
-        ProbeProtocol::Tcp => Box::new(TcpProbe {
-            timeout,
-            port,
-            port_base: random::<u16>() | 0x8000,
-            sockets: Mutex::new(None),
-        }),
+        ProbeProtocol::Tcp => {
+            let source_ip = tcp::resolve_source_ip(target)
+                .unwrap_or(if target.is_ipv6() {
+                    IpAddr::V6(Ipv6Addr::UNSPECIFIED)
+                } else {
+                    IpAddr::V4(Ipv4Addr::UNSPECIFIED)
+                });
+            Box::new(TcpProbe {
+                timeout,
+                port,
+                port_base: random::<u16>() | 0x8000,
+                source_ip,
+                sockets: Mutex::new(None),
+            })
+        }
         ProbeProtocol::TcpConnect => Box::new(TcpConnectProbe { timeout, port }),
     }
 }
@@ -155,6 +166,7 @@ mod tests {
             Duration::from_secs(2),
             64,
             0,
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
         );
         // Verify it's a valid Probe by checking we got a Box<dyn Probe>
         let _: &dyn Probe = probe.as_ref();
@@ -167,6 +179,7 @@ mod tests {
             Duration::from_secs(2),
             64,
             33434,
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
         );
         let _: &dyn Probe = probe.as_ref();
     }
@@ -178,6 +191,7 @@ mod tests {
             Duration::from_secs(2),
             64,
             80,
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
         );
         let _: &dyn Probe = probe.as_ref();
     }
@@ -189,6 +203,7 @@ mod tests {
             Duration::from_secs(2),
             64,
             80,
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
         );
         let _: &dyn Probe = probe.as_ref();
     }
@@ -221,6 +236,7 @@ mod tests {
             timeout: Duration::from_secs(1),
             port: 80,
             port_base: 40000,
+            source_ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
             sockets: Mutex::new(None),
         };
         let result = probe

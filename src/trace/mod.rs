@@ -38,6 +38,7 @@ impl TraceEngine {
             Duration::from_secs_f64(config.timeout),
             config.size,
             config.port,
+            target,
         );
         Self {
             state,
