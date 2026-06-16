@@ -3,6 +3,7 @@ pub mod state;
 
 use parking_lot::RwLock;
 use std::net::IpAddr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -22,10 +23,15 @@ pub struct TraceEngine {
     max_hops: u8,
     count: Option<u64>,
     max_samples: usize,
+    paused: Arc<AtomicBool>,
 }
 
 impl TraceEngine {
-    pub fn new(state: Arc<RwLock<TraceState>>, config: &Config) -> Self {
+    pub fn new(
+        state: Arc<RwLock<TraceState>>,
+        config: &Config,
+        paused: Arc<AtomicBool>,
+    ) -> Self {
         let target = state.read().target.addr;
         let probe = create_probe(
             config.protocol,
@@ -41,6 +47,7 @@ impl TraceEngine {
             max_hops: config.max_hops,
             count: config.count,
             max_samples: DEFAULT_MAX_SAMPLES,
+            paused,
         }
     }
 
@@ -53,6 +60,13 @@ impl TraceEngine {
             if let Some(limit) = self.count {
                 if round >= limit {
                     break;
+                }
+            }
+
+            while self.paused.load(Ordering::Relaxed) {
+                tokio::select! {
+                    _ = tokio::time::sleep(Duration::from_millis(100)) => {}
+                    _ = cancel.cancelled() => { return; }
                 }
             }
 
@@ -171,7 +185,7 @@ mod tests {
     fn new_creates_engine_with_correct_config() {
         let state = test_state();
         let config = test_config();
-        let engine = TraceEngine::new(state, &config);
+        let engine = TraceEngine::new(state, &config, Arc::new(AtomicBool::new(false)));
 
         assert_eq!(engine.max_hops, 3);
         assert_eq!(engine.count, Some(1));
@@ -185,7 +199,7 @@ mod tests {
         let state = test_state();
         let mut config = test_config();
         config.count = None;
-        let engine = TraceEngine::new(state, &config);
+        let engine = TraceEngine::new(state, &config, Arc::new(AtomicBool::new(false)));
 
         assert_eq!(engine.count, None);
     }
@@ -203,6 +217,7 @@ mod tests {
             max_hops: 3,
             count: Some(1),
             max_samples: DEFAULT_MAX_SAMPLES,
+            paused: Arc::new(AtomicBool::new(false)),
         };
 
         engine.probe_round(0).await;
@@ -230,6 +245,7 @@ mod tests {
             max_hops: 2,
             count: Some(1),
             max_samples: DEFAULT_MAX_SAMPLES,
+            paused: Arc::new(AtomicBool::new(false)),
         };
 
         engine.probe_round(0).await;
@@ -257,6 +273,7 @@ mod tests {
             max_hops: 2,
             count: Some(3),
             max_samples: DEFAULT_MAX_SAMPLES,
+            paused: Arc::new(AtomicBool::new(false)),
         };
 
         let cancel = CancellationToken::new();
@@ -283,6 +300,7 @@ mod tests {
             max_hops: 2,
             count: None,
             max_samples: DEFAULT_MAX_SAMPLES,
+            paused: Arc::new(AtomicBool::new(false)),
         };
 
         let cancel = CancellationToken::new();
@@ -319,6 +337,7 @@ mod tests {
             max_hops: 5,
             count: Some(1),
             max_samples: DEFAULT_MAX_SAMPLES,
+            paused: Arc::new(AtomicBool::new(false)),
         };
 
         engine.probe_round(0).await;
@@ -342,6 +361,7 @@ mod tests {
             max_hops: 3,
             count: Some(1),
             max_samples: DEFAULT_MAX_SAMPLES,
+            paused: Arc::new(AtomicBool::new(false)),
         };
 
         engine.probe_round(0).await;
@@ -370,5 +390,42 @@ mod tests {
         // With parking_lot::RwLock this succeeds (no poisoning).
         let s = state.read();
         assert_eq!(s.hop_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn run_pauses_when_paused_flag_set() {
+        let state = test_state();
+        let paused = Arc::new(AtomicBool::new(true));
+
+        let engine = TraceEngine {
+            state: state.clone(),
+            target: IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)),
+            probe: Box::new(MockProbe {
+                rtt: Some(Duration::from_millis(1)),
+            }),
+            interval: Duration::from_millis(1),
+            max_hops: 2,
+            count: Some(3),
+            max_samples: DEFAULT_MAX_SAMPLES,
+            paused: paused.clone(),
+        };
+
+        let cancel = CancellationToken::new();
+        let cancel_clone = cancel.clone();
+        let paused_clone = paused.clone();
+
+        let handle = tokio::spawn(async move {
+            engine.run(cancel_clone).await;
+        });
+
+        // Engine should be paused, no rounds completed
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert_eq!(state.read().round, 0, "should not probe while paused");
+
+        // Unpause and let it complete
+        paused_clone.store(false, Ordering::Relaxed);
+        handle.await.unwrap();
+
+        assert_eq!(state.read().round, 3, "should complete all rounds after unpause");
     }
 }

@@ -6,6 +6,7 @@ mod tui;
 
 use clap::Parser;
 use parking_lot::RwLock;
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
@@ -56,11 +57,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let cancel = CancellationToken::new();
+    let paused = Arc::new(AtomicBool::new(false));
 
     // Spawn a trace engine per target
     let mut engine_handles: Vec<JoinHandle<()>> = Vec::new();
     for state in &states {
-        let engine = trace::TraceEngine::new(Arc::clone(state), &config);
+        let engine =
+            trace::TraceEngine::new(Arc::clone(state), &config, Arc::clone(&paused));
         let cancel_engine = cancel.clone();
         engine_handles.push(tokio::spawn(async move {
             engine.run(cancel_engine).await;
