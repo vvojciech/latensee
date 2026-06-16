@@ -8,7 +8,7 @@ Keybindings:
   q / Esc    Quit
   Up / k     Previous hop
   Down / j   Next hop
-  p          Pause/resume
+  p          Pause/resume probing
   h / ?      Toggle this help
   Tab        Next target
   Shift+Tab  Previous target
