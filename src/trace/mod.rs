@@ -117,21 +117,26 @@ mod tests {
     use super::*;
     use crate::config::ProbeProtocol;
     use crate::trace::state::{ProbeResult, TargetInfo, TraceState};
-    use async_trait::async_trait;
+    use std::future::Future;
     use std::net::Ipv4Addr;
+    use std::pin::Pin;
 
     struct MockProbe {
         rtt: Option<Duration>,
     }
 
-    #[async_trait]
     impl Probe for MockProbe {
-        async fn send(&self, _target: IpAddr, _ttl: u8, _seq: u16) -> ProbeResult {
-            ProbeResult {
-                rtt: self.rtt,
-                addr: None,
-                error: None,
-            }
+        fn send(&self, _target: IpAddr, _ttl: u8, _seq: u16)
+            -> Pin<Box<dyn Future<Output = ProbeResult> + Send + '_>>
+        {
+            let rtt = self.rtt;
+            Box::pin(async move {
+                ProbeResult {
+                    rtt,
+                    addr: None,
+                    error: None,
+                }
+            })
         }
     }
 
@@ -140,19 +145,24 @@ mod tests {
         route_len: u8,
     }
 
-    #[async_trait]
     impl Probe for MockProbeWithRoute {
-        async fn send(&self, _target: IpAddr, ttl: u8, _seq: u16) -> ProbeResult {
-            let addr = if ttl >= self.route_len {
-                Some(self.target)
-            } else {
-                Some(IpAddr::V4(Ipv4Addr::new(10, 0, 0, ttl)))
-            };
-            ProbeResult {
-                rtt: Some(Duration::from_millis(ttl as u64)),
-                addr,
-                error: None,
-            }
+        fn send(&self, _target: IpAddr, ttl: u8, _seq: u16)
+            -> Pin<Box<dyn Future<Output = ProbeResult> + Send + '_>>
+        {
+            let target = self.target;
+            let route_len = self.route_len;
+            Box::pin(async move {
+                let addr = if ttl >= route_len {
+                    Some(target)
+                } else {
+                    Some(IpAddr::V4(Ipv4Addr::new(10, 0, 0, ttl)))
+                };
+                ProbeResult {
+                    rtt: Some(Duration::from_millis(ttl as u64)),
+                    addr,
+                    error: None,
+                }
+            })
         }
     }
 

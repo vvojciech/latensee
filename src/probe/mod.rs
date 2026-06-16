@@ -5,18 +5,19 @@ pub mod tcp_connect;
 pub mod udp;
 
 use parking_lot::Mutex;
+use std::future::Future;
 use std::net::IpAddr;
+use std::pin::Pin;
 use std::time::Duration;
 
-use async_trait::async_trait;
 use rand::random;
 
 use crate::config::ProbeProtocol;
 use crate::trace::state::ProbeResult;
 
-#[async_trait]
 pub trait Probe: Send + Sync {
-    async fn send(&self, target: IpAddr, ttl: u8, seq: u16) -> ProbeResult;
+    fn send(&self, target: IpAddr, ttl: u8, seq: u16)
+        -> Pin<Box<dyn Future<Output = ProbeResult> + Send + '_>>;
 }
 
 // --- ICMP ---
@@ -39,15 +40,18 @@ impl IcmpProbe {
     }
 }
 
-#[async_trait]
 impl Probe for IcmpProbe {
-    async fn send(&self, target: IpAddr, ttl: u8, seq: u16) -> ProbeResult {
-        let sock = self.socket.lock().take();
-        let (result, returned_sock) =
-            icmp::send_probe(target, ttl, seq, self.timeout, self.size, self.identifier, sock)
-                .await;
-        *self.socket.lock() = returned_sock;
-        result
+    fn send(&self, target: IpAddr, ttl: u8, seq: u16)
+        -> Pin<Box<dyn Future<Output = ProbeResult> + Send + '_>>
+    {
+        Box::pin(async move {
+            let sock = self.socket.lock().take();
+            let (result, returned_sock) =
+                icmp::send_probe(target, ttl, seq, self.timeout, self.size, self.identifier, sock)
+                    .await;
+            *self.socket.lock() = returned_sock;
+            result
+        })
     }
 }
 
@@ -59,14 +63,17 @@ pub struct UdpProbe {
     sockets: Mutex<Option<(socket2::Socket, socket2::Socket)>>,
 }
 
-#[async_trait]
 impl Probe for UdpProbe {
-    async fn send(&self, target: IpAddr, ttl: u8, seq: u16) -> ProbeResult {
-        let socks = self.sockets.lock().take();
-        let (result, returned_socks) =
-            udp::send_udp_probe(target, ttl, seq, self.timeout, self.port, socks).await;
-        *self.sockets.lock() = returned_socks;
-        result
+    fn send(&self, target: IpAddr, ttl: u8, seq: u16)
+        -> Pin<Box<dyn Future<Output = ProbeResult> + Send + '_>>
+    {
+        Box::pin(async move {
+            let socks = self.sockets.lock().take();
+            let (result, returned_socks) =
+                udp::send_udp_probe(target, ttl, seq, self.timeout, self.port, socks).await;
+            *self.sockets.lock() = returned_socks;
+            result
+        })
     }
 }
 
@@ -79,15 +86,18 @@ pub struct TcpProbe {
     sockets: Mutex<Option<(socket2::Socket, socket2::Socket)>>,
 }
 
-#[async_trait]
 impl Probe for TcpProbe {
-    async fn send(&self, target: IpAddr, ttl: u8, seq: u16) -> ProbeResult {
-        let socks = self.sockets.lock().take();
-        let (result, returned_socks) =
-            tcp::send_tcp_probe(target, ttl, seq, self.timeout, self.port, self.port_base, socks)
-                .await;
-        *self.sockets.lock() = returned_socks;
-        result
+    fn send(&self, target: IpAddr, ttl: u8, seq: u16)
+        -> Pin<Box<dyn Future<Output = ProbeResult> + Send + '_>>
+    {
+        Box::pin(async move {
+            let socks = self.sockets.lock().take();
+            let (result, returned_socks) =
+                tcp::send_tcp_probe(target, ttl, seq, self.timeout, self.port, self.port_base, socks)
+                    .await;
+            *self.sockets.lock() = returned_socks;
+            result
+        })
     }
 }
 
@@ -98,10 +108,13 @@ pub struct TcpConnectProbe {
     pub port: u16,
 }
 
-#[async_trait]
 impl Probe for TcpConnectProbe {
-    async fn send(&self, target: IpAddr, ttl: u8, seq: u16) -> ProbeResult {
-        tcp_connect::send_tcp_connect_probe(target, ttl, seq, self.timeout, self.port).await
+    fn send(&self, target: IpAddr, ttl: u8, seq: u16)
+        -> Pin<Box<dyn Future<Output = ProbeResult> + Send + '_>>
+    {
+        Box::pin(async move {
+            tcp_connect::send_tcp_connect_probe(target, ttl, seq, self.timeout, self.port).await
+        })
     }
 }
 
