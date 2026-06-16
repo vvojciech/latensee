@@ -36,36 +36,26 @@ pub fn build_loss_data(hop: &HopState) -> Vec<(f64, f64)> {
 }
 
 /// Compute Y-axis bounds with 10% padding on each side.
-/// Ensures both threshold lines are visible within the range.
-/// Returns (0.0, crit + padding) for empty data.
-pub fn compute_y_bounds(data: &[(f64, f64)], thresholds: &Thresholds) -> (f64, f64) {
-    let data_max = data
+/// Returns (0.0, 1.0) for empty data.
+pub fn compute_y_bounds(data: &[(f64, f64)]) -> (f64, f64) {
+    if data.is_empty() {
+        return (0.0, 1.0);
+    }
+
+    let min_y = data.iter().map(|(_, y)| *y).fold(f64::INFINITY, f64::min);
+    let max_y = data
         .iter()
         .map(|(_, y)| *y)
         .fold(f64::NEG_INFINITY, f64::max);
 
-    let effective_max = if data.is_empty() {
-        thresholds.rtt_crit_ms
-    } else {
-        data_max.max(thresholds.rtt_crit_ms)
-    };
-
-    let min_y = if data.is_empty() {
-        0.0
-    } else {
-        data.iter()
-            .map(|(_, y)| *y)
-            .fold(f64::INFINITY, f64::min)
-    };
-
-    let range = effective_max - min_y;
+    let range = max_y - min_y;
     let padding = if range == 0.0 {
         0.1 * min_y.max(1.0)
     } else {
         0.1 * range
     };
 
-    ((min_y - padding).max(0.0), effective_max + padding)
+    ((min_y - padding).max(0.0), max_y + padding)
 }
 
 /// Holds the split data needed for multi-color chart rendering.
@@ -75,15 +65,12 @@ pub struct ChartData {
     pub warn: Vec<(f64, f64)>,
     pub crit: Vec<(f64, f64)>,
     pub loss: Vec<(f64, f64)>,
-    pub warn_line: Vec<(f64, f64)>,
-    pub crit_line: Vec<(f64, f64)>,
 }
 
-/// Split raw data into color zones, threshold lines, and loss markers.
+/// Split raw data into color zones and loss markers.
 pub fn prepare_chart_data(
     data: &[(f64, f64)],
     hop: &HopState,
-    x_max: f64,
     thresholds: &Thresholds,
 ) -> ChartData {
     ChartData {
@@ -91,31 +78,12 @@ pub fn prepare_chart_data(
         warn: data.iter().filter(|(_, y)| *y >= thresholds.rtt_warn_ms && *y < thresholds.rtt_crit_ms).copied().collect(),
         crit: data.iter().filter(|(_, y)| *y >= thresholds.rtt_crit_ms).copied().collect(),
         loss: build_loss_data(hop),
-        warn_line: vec![(0.0, thresholds.rtt_warn_ms), (x_max, thresholds.rtt_warn_ms)],
-        crit_line: vec![(0.0, thresholds.rtt_crit_ms), (x_max, thresholds.rtt_crit_ms)],
     }
 }
 
 /// Build datasets that borrow from a ChartData struct.
 pub fn build_chart_datasets(cd: &ChartData) -> Vec<Dataset<'_>> {
     let mut datasets = Vec::new();
-
-    datasets.push(
-        Dataset::default()
-            .name("warn")
-            .marker(Marker::Dot)
-            .graph_type(GraphType::Line)
-            .style(Style::default().fg(Color::DarkGray))
-            .data(&cd.warn_line),
-    );
-    datasets.push(
-        Dataset::default()
-            .name("crit")
-            .marker(Marker::Dot)
-            .graph_type(GraphType::Line)
-            .style(Style::default().fg(Color::DarkGray))
-            .data(&cd.crit_line),
-    );
 
     if !cd.good.is_empty() {
         datasets.push(
@@ -272,42 +240,43 @@ mod tests {
 
     // -- compute_y_bounds tests --
 
+    #[test]
+    fn compute_y_bounds_with_data_returns_padded_range() {
+        let data = vec![(0.0, 10.0), (1.0, 20.0), (2.0, 30.0)];
+        let (min, max) = compute_y_bounds(&data);
+        // range = 20, padding = 2
+        assert!((min - 8.0).abs() < 0.001);
+        assert!((max - 32.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn compute_y_bounds_empty_data_returns_default() {
+        let (min, max) = compute_y_bounds(&[]);
+        assert_eq!(min, 0.0);
+        assert_eq!(max, 1.0);
+    }
+
+    #[test]
+    fn compute_y_bounds_single_point_adds_padding() {
+        let data = vec![(0.0, 50.0)];
+        let (min, max) = compute_y_bounds(&data);
+        assert!((min - 45.0).abs() < 0.001);
+        assert!((max - 55.0).abs() < 0.001);
+    }
+
+    // -- build_chart_datasets tests --
+
     fn defaults() -> Thresholds {
         Thresholds::default()
     }
 
     #[test]
-    fn compute_y_bounds_with_data_below_thresholds() {
-        let data = vec![(0.0, 10.0), (1.0, 20.0), (2.0, 30.0)];
-        let (min, max) = compute_y_bounds(&data, &defaults());
-        // effective_max = max(30, 150) = 150, range = 150-10 = 140, padding = 14
-        assert!(min >= 0.0);
-        assert!(max > 150.0, "should extend past crit threshold: {max}");
-    }
-
-    #[test]
-    fn compute_y_bounds_empty_data_covers_thresholds() {
-        let (min, max) = compute_y_bounds(&[], &defaults());
-        assert_eq!(min, 0.0);
-        assert!(max > 150.0, "should cover crit threshold: {max}");
-    }
-
-    #[test]
-    fn compute_y_bounds_data_above_crit_uses_data_max() {
-        let data = vec![(0.0, 200.0), (1.0, 300.0)];
-        let (_, max) = compute_y_bounds(&data, &defaults());
-        assert!(max > 300.0, "should extend past data max: {max}");
-    }
-
-    // -- build_chart_datasets tests --
-
-    #[test]
-    fn build_chart_datasets_returns_at_least_threshold_lines() {
+    fn build_chart_datasets_empty_data_returns_empty() {
         let data: Vec<(f64, f64)> = vec![];
         let hop = make_hop(1, vec![]);
-        let cd = prepare_chart_data(&data, &hop, 10.0, &defaults());
+        let cd = prepare_chart_data(&data, &hop, &defaults());
         let ds = build_chart_datasets(&cd);
-        assert!(ds.len() >= 2, "should have at least warn and crit lines");
+        assert!(ds.is_empty());
     }
 
     #[test]
@@ -322,7 +291,7 @@ mod tests {
             make_probe(Some(80_000)),
             make_probe(Some(200_000)),
         ]);
-        let cd = prepare_chart_data(&data, &hop, 3.0, &defaults());
+        let cd = prepare_chart_data(&data, &hop, &defaults());
         assert_eq!(cd.good.len(), 1);
         assert_eq!(cd.warn.len(), 1);
         assert_eq!(cd.crit.len(), 1);

@@ -274,11 +274,11 @@ pub fn render_frame(
         if !active_state.hops.is_empty() && app.selected_hop < active_state.hops.len() {
             let hop = &active_state.hops[app.selected_hop];
             let data = build_latency_data(hop);
-            let (y_min, y_max) = compute_y_bounds(&data, thresholds);
+            let (y_min, y_max) = compute_y_bounds(&data);
             let x_max = if data.is_empty() { 1.0 } else { data.len() as f64 };
             let title = latency_chart_title(hop);
 
-            let cd = prepare_chart_data(&data, hop, x_max, thresholds);
+            let cd = prepare_chart_data(&data, hop, thresholds);
             let datasets = build_chart_datasets(&cd);
             let chart = Chart::new(datasets)
                 .block(Block::default().borders(Borders::ALL).title(title))
