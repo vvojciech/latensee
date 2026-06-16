@@ -715,4 +715,20 @@ mod tests {
         let src = base.wrapping_add(1);
         assert_eq!(src, 0);
     }
+
+    #[test]
+    fn tcp_checksum_depends_on_source_ip() {
+        let target = IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8));
+        let pkt1 = build_tcp_syn(30001, 80, target, 1);
+        let cksum1 = u16::from_be_bytes([pkt1[16], pkt1[17]]);
+
+        // With a different source IP, the checksum should differ
+        // (currently build_tcp_syn always uses 0.0.0.0, so this test
+        // documents that the checksum is wrong and will change when fixed)
+        let src_real = Ipv4Addr::new(192, 168, 1, 100);
+        let tcp = TcpPacket::new(&pkt1).unwrap();
+        let cksum_real = ipv4_checksum(&tcp, &src_real, &Ipv4Addr::new(8, 8, 8, 8));
+
+        assert_ne!(cksum1, cksum_real, "checksum with 0.0.0.0 differs from real source IP");
+    }
 }
