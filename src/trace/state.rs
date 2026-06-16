@@ -124,8 +124,11 @@ impl HopState {
     }
 
     pub fn add_probe(&mut self, result: ProbeResult, max_samples: usize) {
-        if self.addr.is_none() {
-            self.addr = result.addr;
+        if let Some(new_addr) = result.addr {
+            if self.addr != Some(new_addr) {
+                self.addr = Some(new_addr);
+                self.hostname = None;
+            }
         }
         self.stats.record_probe(&result);
         self.samples.push_back(result);
