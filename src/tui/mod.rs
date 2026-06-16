@@ -29,7 +29,9 @@ pub struct AppState {
     pub selected_hop: usize,
     pub paused: bool,
     pub show_help: bool,
+    pub show_chart: bool,
     pub should_quit: bool,
+    pub reset_requested: bool,
     pub active_target: usize,
     pub target_count: usize,
     shared_paused: Arc<AtomicBool>,
@@ -41,7 +43,9 @@ impl AppState {
             selected_hop: 0,
             paused: false,
             show_help: false,
+            show_chart: true,
             should_quit: false,
+            reset_requested: false,
             active_target: 0,
             target_count: target_count.max(1),
             shared_paused,
@@ -83,6 +87,10 @@ impl AppState {
     pub fn toggle_help(&mut self) {
         self.show_help = !self.show_help;
     }
+
+    pub fn toggle_chart(&mut self) {
+        self.show_chart = !self.show_chart;
+    }
 }
 
 /// Prepare the terminal for TUI rendering.
@@ -119,8 +127,8 @@ pub fn handle_key_event(key: KeyEvent, app: &mut AppState, max_hops: usize) {
         KeyCode::Char('h') | KeyCode::Char('?') => app.toggle_help(),
         KeyCode::Tab => app.next_target(),
         KeyCode::BackTab => app.prev_target(),
-        KeyCode::Char('r') => {} // reserved: reset stats
-        KeyCode::Char('g') => {} // reserved: graph toggle
+        KeyCode::Char('r') => app.reset_requested = true,
+        KeyCode::Char('g') => app.toggle_chart(),
         _ => {}
     }
 }
@@ -152,7 +160,7 @@ pub fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
 /// Render the full TUI frame: summary bar, hop table, latency chart, and optional help overlay.
 pub fn render_frame(frame: &mut Frame, state: &TraceState, app: &AppState) {
     let area = frame.area();
-    let show_chart = area.height >= MIN_HEIGHT_FOR_CHART;
+    let show_chart = app.show_chart && area.height >= MIN_HEIGHT_FOR_CHART;
 
     let chunks = if show_chart {
         Layout::default()
@@ -273,6 +281,14 @@ async fn run_event_loop(
                     }
                 }
             }
+        }
+
+        if app.reset_requested {
+            let state = &states[app.active_target];
+            state.write().reset_all();
+            app.reset_requested = false;
+            last_round = 0;
+            needs_redraw = true;
         }
 
         if app.should_quit {
@@ -436,6 +452,24 @@ mod tests {
         let mut app = AppState::new(1, Arc::new(AtomicBool::new(false)));
         handle_key_event(press(KeyCode::Char('?')), &mut app, 5);
         assert!(app.show_help);
+    }
+
+    #[test]
+    fn key_g_toggles_chart() {
+        let mut app = AppState::new(1, Arc::new(AtomicBool::new(false)));
+        assert!(app.show_chart);
+        handle_key_event(press(KeyCode::Char('g')), &mut app, 5);
+        assert!(!app.show_chart);
+        handle_key_event(press(KeyCode::Char('g')), &mut app, 5);
+        assert!(app.show_chart);
+    }
+
+    #[test]
+    fn key_r_sets_reset_requested() {
+        let mut app = AppState::new(1, Arc::new(AtomicBool::new(false)));
+        assert!(!app.reset_requested);
+        handle_key_event(press(KeyCode::Char('r')), &mut app, 5);
+        assert!(app.reset_requested);
     }
 
     #[test]
