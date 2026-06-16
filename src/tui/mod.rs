@@ -22,7 +22,7 @@ use tokio_util::sync::CancellationToken;
 use crate::trace::state::TraceState;
 use widgets::help::help_widget;
 use widgets::hop_table::{build_hop_table_rows, hop_table_widget};
-use widgets::latency_chart::{build_chart_dataset, build_latency_data, compute_y_bounds, latency_chart_title};
+use widgets::latency_chart::{build_chart_datasets, build_latency_data, compute_y_bounds, latency_chart_title, prepare_chart_data};
 use widgets::target_list::{build_target_list_rows, target_list_widget};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -274,12 +274,13 @@ pub fn render_frame(
         if !active_state.hops.is_empty() && app.selected_hop < active_state.hops.len() {
             let hop = &active_state.hops[app.selected_hop];
             let data = build_latency_data(hop);
-            let (y_min, y_max) = compute_y_bounds(&data);
+            let (y_min, y_max) = compute_y_bounds(&data, thresholds);
             let x_max = if data.is_empty() { 1.0 } else { data.len() as f64 };
             let title = latency_chart_title(hop);
 
-            let dataset = build_chart_dataset(&data);
-            let chart = Chart::new(vec![dataset])
+            let cd = prepare_chart_data(&data, hop, x_max, thresholds);
+            let datasets = build_chart_datasets(&cd);
+            let chart = Chart::new(datasets)
                 .block(Block::default().borders(Borders::ALL).title(title))
                 .x_axis(
                     Axis::default()

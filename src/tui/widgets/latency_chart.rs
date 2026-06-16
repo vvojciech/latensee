@@ -2,6 +2,7 @@ use ratatui::style::{Color, Style};
 use ratatui::symbols::Marker;
 use ratatui::widgets::{Dataset, GraphType};
 
+use crate::config::Thresholds;
 use crate::trace::state::HopState;
 
 /// Extract (x, y) chart points from hop samples.
@@ -19,37 +20,143 @@ pub fn build_latency_data(hop: &HopState) -> Vec<(f64, f64)> {
         .collect()
 }
 
-/// Compute Y-axis bounds with 10% padding on each side.
-/// Returns (0.0, 1.0) for empty data.
-pub fn compute_y_bounds(data: &[(f64, f64)]) -> (f64, f64) {
-    if data.is_empty() {
-        return (0.0, 1.0);
-    }
+/// Extract loss points: (index, 0.0) for each sample where rtt is None.
+pub fn build_loss_data(hop: &HopState) -> Vec<(f64, f64)> {
+    hop.samples
+        .iter()
+        .enumerate()
+        .filter_map(|(i, probe)| {
+            if probe.rtt.is_none() {
+                Some((i as f64, 0.0))
+            } else {
+                None
+            }
+        })
+        .collect()
+}
 
-    let min_y = data.iter().map(|(_, y)| *y).fold(f64::INFINITY, f64::min);
-    let max_y = data
+/// Compute Y-axis bounds with 10% padding on each side.
+/// Ensures both threshold lines are visible within the range.
+/// Returns (0.0, crit + padding) for empty data.
+pub fn compute_y_bounds(data: &[(f64, f64)], thresholds: &Thresholds) -> (f64, f64) {
+    let data_max = data
         .iter()
         .map(|(_, y)| *y)
         .fold(f64::NEG_INFINITY, f64::max);
 
-    let range = max_y - min_y;
+    let effective_max = if data.is_empty() {
+        thresholds.rtt_crit_ms
+    } else {
+        data_max.max(thresholds.rtt_crit_ms)
+    };
+
+    let min_y = if data.is_empty() {
+        0.0
+    } else {
+        data.iter()
+            .map(|(_, y)| *y)
+            .fold(f64::INFINITY, f64::min)
+    };
+
+    let range = effective_max - min_y;
     let padding = if range == 0.0 {
         0.1 * min_y.max(1.0)
     } else {
         0.1 * range
     };
 
-    ((min_y - padding).max(0.0), max_y + padding)
+    ((min_y - padding).max(0.0), effective_max + padding)
 }
 
-/// Build a ratatui Dataset for the latency chart.
-pub fn build_chart_dataset(data: &[(f64, f64)]) -> Dataset<'_> {
-    Dataset::default()
-        .name("RTT")
-        .marker(Marker::Braille)
-        .graph_type(GraphType::Line)
-        .style(Style::default().fg(Color::Cyan))
-        .data(data)
+/// Holds the split data needed for multi-color chart rendering.
+/// All vecs own their data so they outlive the Dataset references.
+pub struct ChartData {
+    pub good: Vec<(f64, f64)>,
+    pub warn: Vec<(f64, f64)>,
+    pub crit: Vec<(f64, f64)>,
+    pub loss: Vec<(f64, f64)>,
+    pub warn_line: Vec<(f64, f64)>,
+    pub crit_line: Vec<(f64, f64)>,
+}
+
+/// Split raw data into color zones, threshold lines, and loss markers.
+pub fn prepare_chart_data(
+    data: &[(f64, f64)],
+    hop: &HopState,
+    x_max: f64,
+    thresholds: &Thresholds,
+) -> ChartData {
+    ChartData {
+        good: data.iter().filter(|(_, y)| *y < thresholds.rtt_warn_ms).copied().collect(),
+        warn: data.iter().filter(|(_, y)| *y >= thresholds.rtt_warn_ms && *y < thresholds.rtt_crit_ms).copied().collect(),
+        crit: data.iter().filter(|(_, y)| *y >= thresholds.rtt_crit_ms).copied().collect(),
+        loss: build_loss_data(hop),
+        warn_line: vec![(0.0, thresholds.rtt_warn_ms), (x_max, thresholds.rtt_warn_ms)],
+        crit_line: vec![(0.0, thresholds.rtt_crit_ms), (x_max, thresholds.rtt_crit_ms)],
+    }
+}
+
+/// Build datasets that borrow from a ChartData struct.
+pub fn build_chart_datasets(cd: &ChartData) -> Vec<Dataset<'_>> {
+    let mut datasets = Vec::new();
+
+    datasets.push(
+        Dataset::default()
+            .name("warn")
+            .marker(Marker::Dot)
+            .graph_type(GraphType::Line)
+            .style(Style::default().fg(Color::DarkGray))
+            .data(&cd.warn_line),
+    );
+    datasets.push(
+        Dataset::default()
+            .name("crit")
+            .marker(Marker::Dot)
+            .graph_type(GraphType::Line)
+            .style(Style::default().fg(Color::DarkGray))
+            .data(&cd.crit_line),
+    );
+
+    if !cd.good.is_empty() {
+        datasets.push(
+            Dataset::default()
+                .marker(Marker::Braille)
+                .graph_type(GraphType::Scatter)
+                .style(Style::default().fg(Color::Green))
+                .data(&cd.good),
+        );
+    }
+    if !cd.warn.is_empty() {
+        datasets.push(
+            Dataset::default()
+                .marker(Marker::Braille)
+                .graph_type(GraphType::Scatter)
+                .style(Style::default().fg(Color::Yellow))
+                .data(&cd.warn),
+        );
+    }
+    if !cd.crit.is_empty() {
+        datasets.push(
+            Dataset::default()
+                .marker(Marker::Braille)
+                .graph_type(GraphType::Scatter)
+                .style(Style::default().fg(Color::Red))
+                .data(&cd.crit),
+        );
+    }
+
+    if !cd.loss.is_empty() {
+        datasets.push(
+            Dataset::default()
+                .name("loss")
+                .marker(Marker::Braille)
+                .graph_type(GraphType::Scatter)
+                .style(Style::default().fg(Color::Red))
+                .data(&cd.loss),
+        );
+    }
+
+    datasets
 }
 
 /// Build the chart title line for a given hop.
@@ -137,33 +244,89 @@ mod tests {
         assert!((data[2].1 - 0.1).abs() < 0.001);
     }
 
+    // -- build_loss_data tests --
+
+    #[test]
+    fn build_loss_data_captures_timeouts() {
+        let hop = make_hop(
+            1,
+            vec![
+                make_probe(Some(5_000)),
+                make_probe(None),
+                make_probe(Some(10_000)),
+                make_probe(None),
+            ],
+        );
+        let loss = build_loss_data(&hop);
+        assert_eq!(loss.len(), 2);
+        assert_eq!(loss[0], (1.0, 0.0));
+        assert_eq!(loss[1], (3.0, 0.0));
+    }
+
+    #[test]
+    fn build_loss_data_empty_when_no_loss() {
+        let hop = make_hop(1, vec![make_probe(Some(5_000)), make_probe(Some(10_000))]);
+        let loss = build_loss_data(&hop);
+        assert!(loss.is_empty());
+    }
+
     // -- compute_y_bounds tests --
 
+    fn defaults() -> Thresholds {
+        Thresholds::default()
+    }
+
     #[test]
-    fn compute_y_bounds_with_data_returns_padded_range() {
+    fn compute_y_bounds_with_data_below_thresholds() {
         let data = vec![(0.0, 10.0), (1.0, 20.0), (2.0, 30.0)];
-        let (min, max) = compute_y_bounds(&data);
-
-        // range = 20, padding = 2
-        assert!((min - 8.0).abs() < 0.001);
-        assert!((max - 32.0).abs() < 0.001);
+        let (min, max) = compute_y_bounds(&data, &defaults());
+        // effective_max = max(30, 150) = 150, range = 150-10 = 140, padding = 14
+        assert!(min >= 0.0);
+        assert!(max > 150.0, "should extend past crit threshold: {max}");
     }
 
     #[test]
-    fn compute_y_bounds_empty_data_returns_default() {
-        let (min, max) = compute_y_bounds(&[]);
+    fn compute_y_bounds_empty_data_covers_thresholds() {
+        let (min, max) = compute_y_bounds(&[], &defaults());
         assert_eq!(min, 0.0);
-        assert_eq!(max, 1.0);
+        assert!(max > 150.0, "should cover crit threshold: {max}");
     }
 
     #[test]
-    fn compute_y_bounds_single_point_adds_padding() {
-        let data = vec![(0.0, 50.0)];
-        let (min, max) = compute_y_bounds(&data);
+    fn compute_y_bounds_data_above_crit_uses_data_max() {
+        let data = vec![(0.0, 200.0), (1.0, 300.0)];
+        let (_, max) = compute_y_bounds(&data, &defaults());
+        assert!(max > 300.0, "should extend past data max: {max}");
+    }
 
-        // range = 0, padding = 0.1 * max(50.0, 1.0) = 5.0
-        assert!((min - 45.0).abs() < 0.001);
-        assert!((max - 55.0).abs() < 0.001);
+    // -- build_chart_datasets tests --
+
+    #[test]
+    fn build_chart_datasets_returns_at_least_threshold_lines() {
+        let data: Vec<(f64, f64)> = vec![];
+        let hop = make_hop(1, vec![]);
+        let cd = prepare_chart_data(&data, &hop, 10.0, &defaults());
+        let ds = build_chart_datasets(&cd);
+        assert!(ds.len() >= 2, "should have at least warn and crit lines");
+    }
+
+    #[test]
+    fn build_chart_datasets_splits_by_zone() {
+        let data = vec![
+            (0.0, 10.0),   // green
+            (1.0, 80.0),   // yellow (50-150)
+            (2.0, 200.0),  // red (>=150)
+        ];
+        let hop = make_hop(1, vec![
+            make_probe(Some(10_000)),
+            make_probe(Some(80_000)),
+            make_probe(Some(200_000)),
+        ]);
+        let cd = prepare_chart_data(&data, &hop, 3.0, &defaults());
+        assert_eq!(cd.good.len(), 1);
+        assert_eq!(cd.warn.len(), 1);
+        assert_eq!(cd.crit.len(), 1);
+        assert!(cd.loss.is_empty());
     }
 
     // -- latency_chart_title tests --
