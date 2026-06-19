@@ -67,16 +67,64 @@ pub struct ChartData {
     pub loss: Vec<(f64, f64)>,
 }
 
-/// Split raw data into color zones and loss markers.
+fn point_zone(y: f64, thresholds: &Thresholds) -> u8 {
+    if y >= thresholds.rtt_crit_ms {
+        2
+    } else if y >= thresholds.rtt_warn_ms {
+        1
+    } else {
+        0
+    }
+}
+
+/// Split raw data into color zones with boundary point duplication.
+/// When consecutive points cross a threshold, both zones get the transition
+/// point so the lines connect seamlessly at the color change.
 pub fn prepare_chart_data(
     data: &[(f64, f64)],
     hop: &HopState,
     thresholds: &Thresholds,
 ) -> ChartData {
+    let mut good = Vec::new();
+    let mut warn = Vec::new();
+    let mut crit = Vec::new();
+
+    let mut prev_zone: Option<u8> = None;
+
+    for (i, &point) in data.iter().enumerate() {
+        let zone = point_zone(point.1, thresholds);
+
+        if let Some(pz) = prev_zone {
+            if zone != pz {
+                let prev_point = data[i - 1];
+                // End cap: add current point to previous zone's dataset
+                match pz {
+                    0 => good.push(point),
+                    1 => warn.push(point),
+                    _ => crit.push(point),
+                }
+                // Start cap: add previous point to current zone's dataset
+                match zone {
+                    0 => good.push(prev_point),
+                    1 => warn.push(prev_point),
+                    _ => crit.push(prev_point),
+                }
+            }
+        }
+
+        match zone {
+            0 => good.push(point),
+            1 => warn.push(point),
+            _ => crit.push(point),
+        }
+
+        prev_zone = Some(zone);
+    }
+
     ChartData {
-        good: data.iter().filter(|(_, y)| *y < thresholds.rtt_warn_ms).copied().collect(),
-        warn: data.iter().filter(|(_, y)| *y >= thresholds.rtt_warn_ms && *y < thresholds.rtt_crit_ms).copied().collect(),
-        crit: data.iter().filter(|(_, y)| *y >= thresholds.rtt_crit_ms).copied().collect(),
+        good,
+        warn,
+        crit,
         loss: build_loss_data(hop),
     }
 }
@@ -280,11 +328,12 @@ mod tests {
     }
 
     #[test]
-    fn build_chart_datasets_splits_by_zone() {
+    fn zone_split_duplicates_boundary_points() {
+        // green -> yellow -> red: each transition duplicates the boundary
         let data = vec![
             (0.0, 10.0),   // green
-            (1.0, 80.0),   // yellow (50-150)
-            (2.0, 200.0),  // red (>=150)
+            (1.0, 80.0),   // yellow
+            (2.0, 200.0),  // red
         ];
         let hop = make_hop(1, vec![
             make_probe(Some(10_000)),
@@ -292,10 +341,46 @@ mod tests {
             make_probe(Some(200_000)),
         ]);
         let cd = prepare_chart_data(&data, &hop, &defaults());
-        assert_eq!(cd.good.len(), 1);
-        assert_eq!(cd.warn.len(), 1);
-        assert_eq!(cd.crit.len(), 1);
-        assert!(cd.loss.is_empty());
+        // green: (0,10) + end cap (1,80) = 2
+        assert_eq!(cd.good.len(), 2, "green should have original + end cap");
+        // yellow: start cap (0,10) + (1,80) + end cap (2,200) = 3
+        assert_eq!(cd.warn.len(), 3, "yellow should have start cap + original + end cap");
+        // red: start cap (1,80) + (2,200) = 2
+        assert_eq!(cd.crit.len(), 2, "red should have start cap + original");
+    }
+
+    #[test]
+    fn zone_split_single_zone_no_duplicates() {
+        let data = vec![(0.0, 10.0), (1.0, 20.0), (2.0, 30.0)];
+        let hop = make_hop(1, vec![
+            make_probe(Some(10_000)),
+            make_probe(Some(20_000)),
+            make_probe(Some(30_000)),
+        ]);
+        let cd = prepare_chart_data(&data, &hop, &defaults());
+        assert_eq!(cd.good.len(), 3);
+        assert!(cd.warn.is_empty());
+        assert!(cd.crit.is_empty());
+    }
+
+    #[test]
+    fn zone_split_alternating_zones() {
+        // green -> yellow -> green
+        let data = vec![
+            (0.0, 10.0),  // green
+            (1.0, 80.0),  // yellow
+            (2.0, 10.0),  // green
+        ];
+        let hop = make_hop(1, vec![
+            make_probe(Some(10_000)),
+            make_probe(Some(80_000)),
+            make_probe(Some(10_000)),
+        ]);
+        let cd = prepare_chart_data(&data, &hop, &defaults());
+        // green: (0,10) + end cap (1,80) | start cap (1,80) + (2,10) = 4
+        assert_eq!(cd.good.len(), 4, "green: 2 originals + 2 caps");
+        // yellow: start cap (0,10) + (1,80) + end cap (2,10) = 3
+        assert_eq!(cd.warn.len(), 3, "yellow: 1 original + 2 caps");
     }
 
     // -- latency_chart_title tests --
