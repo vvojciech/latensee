@@ -58,50 +58,94 @@ pub fn compute_y_bounds(data: &[(f64, f64)]) -> (f64, f64) {
     ((min_y - padding).max(0.0), max_y + padding)
 }
 
-/// Determine the worst health color from all data points.
-fn worst_point_color(data: &[(f64, f64)], thresholds: &Thresholds) -> Color {
-    if data.is_empty() {
-        return Color::DarkGray;
+fn point_zone(y: f64, thresholds: &Thresholds) -> u8 {
+    if y >= thresholds.rtt_crit_ms {
+        2
+    } else if y >= thresholds.rtt_warn_ms {
+        1
+    } else {
+        0
     }
-    let has_crit = data.iter().any(|(_, y)| *y >= thresholds.rtt_crit_ms);
-    if has_crit {
-        return Color::Red;
-    }
-    let has_warn = data.iter().any(|(_, y)| *y >= thresholds.rtt_warn_ms);
-    if has_warn {
-        return Color::Yellow;
-    }
-    Color::Green
 }
 
-/// Build chart datasets: one connected line colored by worst health, plus loss markers.
-pub fn build_chart_datasets<'a>(
-    data: &'a [(f64, f64)],
-    loss_data: &'a [(f64, f64)],
-    thresholds: &Thresholds,
-) -> Vec<Dataset<'a>> {
-    let mut datasets = Vec::new();
+fn zone_color(zone: u8) -> Color {
+    match zone {
+        0 => Color::Green,
+        1 => Color::Yellow,
+        _ => Color::Red,
+    }
+}
 
-    if !data.is_empty() {
-        let color = worst_point_color(data, thresholds);
-        datasets.push(
-            Dataset::default()
-                .name("RTT")
-                .marker(Marker::Braille)
-                .graph_type(GraphType::Line)
-                .style(Style::default().fg(color))
-                .data(data),
-        );
+pub struct ColorRun {
+    pub zone: u8,
+    pub points: Vec<(f64, f64)>,
+}
+
+/// Split data into contiguous runs by threshold zone.
+/// Boundary points are shared between adjacent runs so lines connect.
+pub fn build_color_runs(data: &[(f64, f64)], thresholds: &Thresholds) -> Vec<ColorRun> {
+    if data.is_empty() {
+        return Vec::new();
     }
 
-    if !loss_data.is_empty() {
+    let mut runs: Vec<ColorRun> = Vec::new();
+    let mut current_zone = point_zone(data[0].1, thresholds);
+    let mut current_points = vec![data[0]];
+
+    for i in 1..data.len() {
+        let zone = point_zone(data[i].1, thresholds);
+        if zone != current_zone {
+            current_points.push(data[i]);
+            runs.push(ColorRun {
+                zone: current_zone,
+                points: std::mem::take(&mut current_points),
+            });
+            current_points.push(data[i - 1]);
+            current_points.push(data[i]);
+            current_zone = zone;
+        } else {
+            current_points.push(data[i]);
+        }
+    }
+
+    if !current_points.is_empty() {
+        runs.push(ColorRun {
+            zone: current_zone,
+            points: current_points,
+        });
+    }
+
+    runs
+}
+
+/// Holds owned run data and loss markers so datasets can borrow from it.
+pub struct ChartRunData {
+    pub runs: Vec<ColorRun>,
+    pub loss: Vec<(f64, f64)>,
+}
+
+/// Build chart datasets from pre-computed run data.
+pub fn build_chart_datasets(run_data: &ChartRunData) -> Vec<Dataset<'_>> {
+    let mut datasets: Vec<Dataset<'_>> = run_data
+        .runs
+        .iter()
+        .map(|run| {
+            Dataset::default()
+                .marker(Marker::Braille)
+                .graph_type(GraphType::Line)
+                .style(Style::default().fg(zone_color(run.zone)))
+                .data(&run.points)
+        })
+        .collect();
+
+    if !run_data.loss.is_empty() {
         datasets.push(
             Dataset::default()
                 .name("loss")
                 .marker(Marker::Braille)
                 .graph_type(GraphType::Line)
                 .style(Style::default().fg(Color::Red))
-                .data(loss_data),
+                .data(&run_data.loss),
         );
     }
 
@@ -245,50 +289,78 @@ mod tests {
         assert!((max - 55.0).abs() < 0.001);
     }
 
-    // -- build_chart_datasets tests --
+    // -- color runs tests --
 
     fn defaults() -> Thresholds {
         Thresholds::default()
     }
 
     #[test]
-    fn chart_empty_returns_empty() {
-        let data: Vec<(f64, f64)> = vec![];
-        let loss: Vec<(f64, f64)> = vec![];
-        let ds = build_chart_datasets(&data, &loss, &defaults());
-        assert!(ds.is_empty());
+    fn runs_empty_data() {
+        let runs = build_color_runs(&[], &defaults());
+        assert!(runs.is_empty());
     }
 
     #[test]
-    fn chart_all_green_uses_green() {
+    fn runs_single_zone_one_run() {
         let data = vec![(0.0, 10.0), (1.0, 20.0), (2.0, 30.0)];
-        let loss: Vec<(f64, f64)> = vec![];
-        let color = worst_point_color(&data, &defaults());
-        assert_eq!(color, Color::Green);
-        let ds = build_chart_datasets(&data, &loss, &defaults());
-        assert_eq!(ds.len(), 1);
+        let runs = build_color_runs(&data, &defaults());
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].zone, 0);
+        assert_eq!(runs[0].points.len(), 3);
     }
 
     #[test]
-    fn chart_one_yellow_uses_yellow() {
-        let data = vec![(0.0, 10.0), (1.0, 80.0)]; // 80 >= 50 warn
-        let color = worst_point_color(&data, &defaults());
-        assert_eq!(color, Color::Yellow);
+    fn runs_zone_transition_shares_boundary() {
+        // green(10) -> yellow(80): boundary at index 1
+        let data = vec![(0.0, 10.0), (1.0, 80.0)];
+        let runs = build_color_runs(&data, &defaults());
+        assert_eq!(runs.len(), 2);
+        // green run: [(0,10), (1,80)] -- original + boundary end cap
+        assert_eq!(runs[0].zone, 0);
+        assert_eq!(runs[0].points.last(), Some(&(1.0, 80.0)));
+        // yellow run: [(0,10), (1,80)] -- boundary start cap + original
+        assert_eq!(runs[1].zone, 1);
+        assert_eq!(runs[1].points.first(), Some(&(0.0, 10.0)));
     }
 
     #[test]
-    fn chart_one_red_uses_red() {
-        let data = vec![(0.0, 10.0), (1.0, 200.0)]; // 200 >= 150 crit
-        let color = worst_point_color(&data, &defaults());
-        assert_eq!(color, Color::Red);
+    fn runs_multiple_transitions() {
+        let data = vec![
+            (0.0, 10.0),   // green
+            (1.0, 80.0),   // yellow
+            (2.0, 200.0),  // red
+            (3.0, 20.0),   // green
+        ];
+        let runs = build_color_runs(&data, &defaults());
+        assert_eq!(runs.len(), 4);
+        assert_eq!(runs[0].zone, 0); // green
+        assert_eq!(runs[1].zone, 1); // yellow
+        assert_eq!(runs[2].zone, 2); // red
+        assert_eq!(runs[3].zone, 0); // green
     }
 
     #[test]
-    fn chart_with_loss_adds_loss_dataset() {
-        let data = vec![(0.0, 10.0)];
-        let loss = vec![(1.0, 0.0)];
-        let ds = build_chart_datasets(&data, &loss, &defaults());
-        assert_eq!(ds.len(), 2);
+    fn chart_datasets_match_run_count_plus_loss() {
+        let run_data = ChartRunData {
+            runs: build_color_runs(
+                &[(0.0, 10.0), (1.0, 80.0)],
+                &defaults(),
+            ),
+            loss: vec![(2.0, 0.0)],
+        };
+        let ds = build_chart_datasets(&run_data);
+        assert_eq!(ds.len(), 3); // 2 runs + 1 loss
+    }
+
+    #[test]
+    fn chart_datasets_empty_when_no_data() {
+        let run_data = ChartRunData {
+            runs: vec![],
+            loss: vec![],
+        };
+        let ds = build_chart_datasets(&run_data);
+        assert!(ds.is_empty());
     }
 
     // -- latency_chart_title tests --
