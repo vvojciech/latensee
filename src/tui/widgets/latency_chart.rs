@@ -89,7 +89,7 @@ pub fn build_chart_datasets(cd: &ChartData) -> Vec<Dataset<'_>> {
         datasets.push(
             Dataset::default()
                 .marker(Marker::Braille)
-                .graph_type(GraphType::Scatter)
+                .graph_type(GraphType::Line)
                 .style(Style::default().fg(Color::Green))
                 .data(&cd.good),
         );
@@ -98,7 +98,7 @@ pub fn build_chart_datasets(cd: &ChartData) -> Vec<Dataset<'_>> {
         datasets.push(
             Dataset::default()
                 .marker(Marker::Braille)
-                .graph_type(GraphType::Scatter)
+                .graph_type(GraphType::Line)
                 .style(Style::default().fg(Color::Yellow))
                 .data(&cd.warn),
         );
@@ -107,7 +107,7 @@ pub fn build_chart_datasets(cd: &ChartData) -> Vec<Dataset<'_>> {
         datasets.push(
             Dataset::default()
                 .marker(Marker::Braille)
-                .graph_type(GraphType::Scatter)
+                .graph_type(GraphType::Line)
                 .style(Style::default().fg(Color::Red))
                 .data(&cd.crit),
         );
@@ -118,7 +118,7 @@ pub fn build_chart_datasets(cd: &ChartData) -> Vec<Dataset<'_>> {
             Dataset::default()
                 .name("loss")
                 .marker(Marker::Braille)
-                .graph_type(GraphType::Scatter)
+                .graph_type(GraphType::Line)
                 .style(Style::default().fg(Color::Red))
                 .data(&cd.loss),
         );
