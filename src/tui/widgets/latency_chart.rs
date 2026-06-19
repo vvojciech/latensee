@@ -58,117 +58,50 @@ pub fn compute_y_bounds(data: &[(f64, f64)]) -> (f64, f64) {
     ((min_y - padding).max(0.0), max_y + padding)
 }
 
-/// Holds the split data needed for multi-color chart rendering.
-/// All vecs own their data so they outlive the Dataset references.
-pub struct ChartData {
-    pub good: Vec<(f64, f64)>,
-    pub warn: Vec<(f64, f64)>,
-    pub crit: Vec<(f64, f64)>,
-    pub loss: Vec<(f64, f64)>,
-}
-
-fn point_zone(y: f64, thresholds: &Thresholds) -> u8 {
-    if y >= thresholds.rtt_crit_ms {
-        2
-    } else if y >= thresholds.rtt_warn_ms {
-        1
-    } else {
-        0
+/// Determine the worst health color from all data points.
+fn worst_point_color(data: &[(f64, f64)], thresholds: &Thresholds) -> Color {
+    if data.is_empty() {
+        return Color::DarkGray;
     }
+    let has_crit = data.iter().any(|(_, y)| *y >= thresholds.rtt_crit_ms);
+    if has_crit {
+        return Color::Red;
+    }
+    let has_warn = data.iter().any(|(_, y)| *y >= thresholds.rtt_warn_ms);
+    if has_warn {
+        return Color::Yellow;
+    }
+    Color::Green
 }
 
-/// Split raw data into color zones with boundary point duplication.
-/// When consecutive points cross a threshold, both zones get the transition
-/// point so the lines connect seamlessly at the color change.
-pub fn prepare_chart_data(
-    data: &[(f64, f64)],
-    hop: &HopState,
+/// Build chart datasets: one connected line colored by worst health, plus loss markers.
+pub fn build_chart_datasets<'a>(
+    data: &'a [(f64, f64)],
+    loss_data: &'a [(f64, f64)],
     thresholds: &Thresholds,
-) -> ChartData {
-    let mut good = Vec::new();
-    let mut warn = Vec::new();
-    let mut crit = Vec::new();
-
-    let mut prev_zone: Option<u8> = None;
-
-    for (i, &point) in data.iter().enumerate() {
-        let zone = point_zone(point.1, thresholds);
-
-        if let Some(pz) = prev_zone {
-            if zone != pz {
-                let prev_point = data[i - 1];
-                // End cap: add current point to previous zone's dataset
-                match pz {
-                    0 => good.push(point),
-                    1 => warn.push(point),
-                    _ => crit.push(point),
-                }
-                // Start cap: add previous point to current zone's dataset
-                match zone {
-                    0 => good.push(prev_point),
-                    1 => warn.push(prev_point),
-                    _ => crit.push(prev_point),
-                }
-            }
-        }
-
-        match zone {
-            0 => good.push(point),
-            1 => warn.push(point),
-            _ => crit.push(point),
-        }
-
-        prev_zone = Some(zone);
-    }
-
-    ChartData {
-        good,
-        warn,
-        crit,
-        loss: build_loss_data(hop),
-    }
-}
-
-/// Build datasets that borrow from a ChartData struct.
-pub fn build_chart_datasets(cd: &ChartData) -> Vec<Dataset<'_>> {
+) -> Vec<Dataset<'a>> {
     let mut datasets = Vec::new();
 
-    if !cd.good.is_empty() {
+    if !data.is_empty() {
+        let color = worst_point_color(data, thresholds);
         datasets.push(
             Dataset::default()
+                .name("RTT")
                 .marker(Marker::Braille)
                 .graph_type(GraphType::Line)
-                .style(Style::default().fg(Color::Green))
-                .data(&cd.good),
-        );
-    }
-    if !cd.warn.is_empty() {
-        datasets.push(
-            Dataset::default()
-                .marker(Marker::Braille)
-                .graph_type(GraphType::Line)
-                .style(Style::default().fg(Color::Yellow))
-                .data(&cd.warn),
-        );
-    }
-    if !cd.crit.is_empty() {
-        datasets.push(
-            Dataset::default()
-                .marker(Marker::Braille)
-                .graph_type(GraphType::Line)
-                .style(Style::default().fg(Color::Red))
-                .data(&cd.crit),
+                .style(Style::default().fg(color))
+                .data(data),
         );
     }
 
-    if !cd.loss.is_empty() {
+    if !loss_data.is_empty() {
         datasets.push(
             Dataset::default()
                 .name("loss")
                 .marker(Marker::Braille)
                 .graph_type(GraphType::Line)
                 .style(Style::default().fg(Color::Red))
-                .data(&cd.loss),
+                .data(loss_data),
         );
     }
 
@@ -319,68 +252,43 @@ mod tests {
     }
 
     #[test]
-    fn build_chart_datasets_empty_data_returns_empty() {
+    fn chart_empty_returns_empty() {
         let data: Vec<(f64, f64)> = vec![];
-        let hop = make_hop(1, vec![]);
-        let cd = prepare_chart_data(&data, &hop, &defaults());
-        let ds = build_chart_datasets(&cd);
+        let loss: Vec<(f64, f64)> = vec![];
+        let ds = build_chart_datasets(&data, &loss, &defaults());
         assert!(ds.is_empty());
     }
 
     #[test]
-    fn zone_split_duplicates_boundary_points() {
-        // green -> yellow -> red: each transition duplicates the boundary
-        let data = vec![
-            (0.0, 10.0),   // green
-            (1.0, 80.0),   // yellow
-            (2.0, 200.0),  // red
-        ];
-        let hop = make_hop(1, vec![
-            make_probe(Some(10_000)),
-            make_probe(Some(80_000)),
-            make_probe(Some(200_000)),
-        ]);
-        let cd = prepare_chart_data(&data, &hop, &defaults());
-        // green: (0,10) + end cap (1,80) = 2
-        assert_eq!(cd.good.len(), 2, "green should have original + end cap");
-        // yellow: start cap (0,10) + (1,80) + end cap (2,200) = 3
-        assert_eq!(cd.warn.len(), 3, "yellow should have start cap + original + end cap");
-        // red: start cap (1,80) + (2,200) = 2
-        assert_eq!(cd.crit.len(), 2, "red should have start cap + original");
-    }
-
-    #[test]
-    fn zone_split_single_zone_no_duplicates() {
+    fn chart_all_green_uses_green() {
         let data = vec![(0.0, 10.0), (1.0, 20.0), (2.0, 30.0)];
-        let hop = make_hop(1, vec![
-            make_probe(Some(10_000)),
-            make_probe(Some(20_000)),
-            make_probe(Some(30_000)),
-        ]);
-        let cd = prepare_chart_data(&data, &hop, &defaults());
-        assert_eq!(cd.good.len(), 3);
-        assert!(cd.warn.is_empty());
-        assert!(cd.crit.is_empty());
+        let loss: Vec<(f64, f64)> = vec![];
+        let color = worst_point_color(&data, &defaults());
+        assert_eq!(color, Color::Green);
+        let ds = build_chart_datasets(&data, &loss, &defaults());
+        assert_eq!(ds.len(), 1);
     }
 
     #[test]
-    fn zone_split_alternating_zones() {
-        // green -> yellow -> green
-        let data = vec![
-            (0.0, 10.0),  // green
-            (1.0, 80.0),  // yellow
-            (2.0, 10.0),  // green
-        ];
-        let hop = make_hop(1, vec![
-            make_probe(Some(10_000)),
-            make_probe(Some(80_000)),
-            make_probe(Some(10_000)),
-        ]);
-        let cd = prepare_chart_data(&data, &hop, &defaults());
-        // green: (0,10) + end cap (1,80) | start cap (1,80) + (2,10) = 4
-        assert_eq!(cd.good.len(), 4, "green: 2 originals + 2 caps");
-        // yellow: start cap (0,10) + (1,80) + end cap (2,10) = 3
-        assert_eq!(cd.warn.len(), 3, "yellow: 1 original + 2 caps");
+    fn chart_one_yellow_uses_yellow() {
+        let data = vec![(0.0, 10.0), (1.0, 80.0)]; // 80 >= 50 warn
+        let color = worst_point_color(&data, &defaults());
+        assert_eq!(color, Color::Yellow);
+    }
+
+    #[test]
+    fn chart_one_red_uses_red() {
+        let data = vec![(0.0, 10.0), (1.0, 200.0)]; // 200 >= 150 crit
+        let color = worst_point_color(&data, &defaults());
+        assert_eq!(color, Color::Red);
+    }
+
+    #[test]
+    fn chart_with_loss_adds_loss_dataset() {
+        let data = vec![(0.0, 10.0)];
+        let loss = vec![(1.0, 0.0)];
+        let ds = build_chart_datasets(&data, &loss, &defaults());
+        assert_eq!(ds.len(), 2);
     }
 
     // -- latency_chart_title tests --
