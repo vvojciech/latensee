@@ -81,8 +81,26 @@ pub struct ColorRun {
     pub points: Vec<(f64, f64)>,
 }
 
+/// Interpolated points where the segment p0 -> p1 strictly crosses a
+/// threshold, ordered by traversal direction from p0 to p1.
+fn crossing_points(p0: (f64, f64), p1: (f64, f64), thresholds: &Thresholds) -> Vec<(f64, f64)> {
+    let (x0, y0) = p0;
+    let (x1, y1) = p1;
+    let mut crossings: Vec<(f64, f64)> = [thresholds.rtt_warn_ms, thresholds.rtt_crit_ms]
+        .into_iter()
+        .filter(|&t| (y0 < t && y1 > t) || (y0 > t && y1 < t))
+        .map(|t| (x0 + (x1 - x0) * (t - y0) / (y1 - y0), t))
+        .collect();
+    if y1 < y0 {
+        crossings.reverse();
+    }
+    crossings
+}
+
 /// Split data into contiguous runs by threshold zone.
-/// Boundary points are shared between adjacent runs so lines connect.
+/// Runs split at interpolated threshold crossings so the color changes
+/// exactly at the threshold height; crossing points are shared between
+/// adjacent runs so lines connect.
 pub fn build_color_runs(data: &[(f64, f64)], thresholds: &Thresholds) -> Vec<ColorRun> {
     if data.is_empty() {
         return Vec::new();
@@ -92,28 +110,33 @@ pub fn build_color_runs(data: &[(f64, f64)], thresholds: &Thresholds) -> Vec<Col
     let mut current_zone = point_zone(data[0].1, thresholds);
     let mut current_points = vec![data[0]];
 
-    for i in 1..data.len() {
-        let zone = point_zone(data[i].1, thresholds);
-        if zone != current_zone {
-            current_points.push(data[i]);
-            runs.push(ColorRun {
-                zone: current_zone,
-                points: std::mem::take(&mut current_points),
-            });
-            current_points.push(data[i - 1]);
-            current_points.push(data[i]);
-            current_zone = zone;
-        } else {
-            current_points.push(data[i]);
+    for pair in data.windows(2) {
+        let (p0, p1) = (pair[0], pair[1]);
+        let mut start = p0;
+        for end in crossing_points(p0, p1, thresholds)
+            .into_iter()
+            .chain(std::iter::once(p1))
+        {
+            // classify by midpoint so a sub-segment merely touching a
+            // threshold at one end keeps the zone it lies in
+            let zone = point_zone((start.1 + end.1) / 2.0, thresholds);
+            if zone != current_zone {
+                runs.push(ColorRun {
+                    zone: current_zone,
+                    points: std::mem::take(&mut current_points),
+                });
+                current_points.push(start);
+                current_zone = zone;
+            }
+            current_points.push(end);
+            start = end;
         }
     }
 
-    if !current_points.is_empty() {
-        runs.push(ColorRun {
-            zone: current_zone,
-            points: current_points,
-        });
-    }
+    runs.push(ColorRun {
+        zone: current_zone,
+        points: current_points,
+    });
 
     runs
 }
@@ -310,34 +333,101 @@ mod tests {
         assert_eq!(runs[0].points.len(), 3);
     }
 
+    fn assert_point_eq(actual: (f64, f64), expected: (f64, f64)) {
+        assert!(
+            (actual.0 - expected.0).abs() < 0.001 && (actual.1 - expected.1).abs() < 0.001,
+            "expected {expected:?}, got {actual:?}"
+        );
+    }
+
     #[test]
-    fn runs_zone_transition_shares_boundary() {
-        // green(10) -> yellow(80): boundary at index 1
+    fn runs_split_at_interpolated_threshold_crossing() {
+        // green(10) -> yellow(80): warn=50 crossed at x = (50-10)/(80-10) = 4/7
         let data = vec![(0.0, 10.0), (1.0, 80.0)];
         let runs = build_color_runs(&data, &defaults());
         assert_eq!(runs.len(), 2);
-        // green run: [(0,10), (1,80)] -- original + boundary end cap
         assert_eq!(runs[0].zone, 0);
-        assert_eq!(runs[0].points.last(), Some(&(1.0, 80.0)));
-        // yellow run: [(0,10), (1,80)] -- boundary start cap + original
+        assert_eq!(runs[0].points.len(), 2);
+        assert_point_eq(runs[0].points[1], (4.0 / 7.0, 50.0));
         assert_eq!(runs[1].zone, 1);
-        assert_eq!(runs[1].points.first(), Some(&(0.0, 10.0)));
+        assert_eq!(runs[1].points.len(), 2);
+        assert_point_eq(runs[1].points[0], (4.0 / 7.0, 50.0));
+        assert_point_eq(runs[1].points[1], (1.0, 80.0));
     }
 
     #[test]
     fn runs_multiple_transitions() {
         let data = vec![
-            (0.0, 10.0),   // green
-            (1.0, 80.0),   // yellow
-            (2.0, 200.0),  // red
-            (3.0, 20.0),   // green
+            (0.0, 10.0),  // green
+            (1.0, 80.0),  // yellow
+            (2.0, 200.0), // red
+            (3.0, 20.0),  // green
         ];
         let runs = build_color_runs(&data, &defaults());
-        assert_eq!(runs.len(), 4);
-        assert_eq!(runs[0].zone, 0); // green
-        assert_eq!(runs[1].zone, 1); // yellow
-        assert_eq!(runs[2].zone, 2); // red
-        assert_eq!(runs[3].zone, 0); // green
+        // the falling 200 -> 20 segment crosses crit then warn,
+        // so it contributes a yellow slice on the way down
+        let zones: Vec<u8> = runs.iter().map(|r| r.zone).collect();
+        assert_eq!(zones, vec![0, 1, 2, 1, 0]);
+        // rising warn crossing
+        assert_point_eq(runs[0].points[1], (4.0 / 7.0, 50.0));
+        // rising crit crossing: x = 1 + (150-80)/(200-80)
+        assert_point_eq(runs[1].points[2], (1.0 + 70.0 / 120.0, 150.0));
+        // falling crit crossing: x = 2 + (150-200)/(20-200)
+        assert_point_eq(runs[2].points[2], (2.0 + 50.0 / 180.0, 150.0));
+        // falling warn crossing: x = 2 + (50-200)/(20-200)
+        assert_point_eq(runs[3].points[1], (2.0 + 150.0 / 180.0, 50.0));
+        assert_point_eq(runs[4].points[1], (3.0, 20.0));
+    }
+
+    #[test]
+    fn runs_double_crossing_in_single_segment() {
+        // green(10) -> red(200): one segment crosses warn and crit
+        let data = vec![(0.0, 10.0), (1.0, 200.0)];
+        let runs = build_color_runs(&data, &defaults());
+        assert_eq!(runs.len(), 3);
+        assert_eq!(runs[0].zone, 0);
+        assert_point_eq(runs[0].points[1], (40.0 / 190.0, 50.0));
+        assert_eq!(runs[1].zone, 1);
+        assert_point_eq(runs[1].points[0], (40.0 / 190.0, 50.0));
+        assert_point_eq(runs[1].points[1], (140.0 / 190.0, 150.0));
+        assert_eq!(runs[2].zone, 2);
+        assert_point_eq(runs[2].points[0], (140.0 / 190.0, 150.0));
+        assert_point_eq(runs[2].points[1], (1.0, 200.0));
+    }
+
+    #[test]
+    fn runs_falling_crossing() {
+        // yellow(80) -> green(10): warn crossed at x = (50-80)/(10-80) = 3/7
+        let data = vec![(0.0, 80.0), (1.0, 10.0)];
+        let runs = build_color_runs(&data, &defaults());
+        assert_eq!(runs.len(), 2);
+        assert_eq!(runs[0].zone, 1);
+        assert_point_eq(runs[0].points[1], (3.0 / 7.0, 50.0));
+        assert_eq!(runs[1].zone, 0);
+        assert_point_eq(runs[1].points[0], (3.0 / 7.0, 50.0));
+        assert_point_eq(runs[1].points[1], (1.0, 10.0));
+    }
+
+    #[test]
+    fn runs_sample_exactly_on_threshold_rising_stays_green() {
+        // the segment lies below the threshold, only touching it at the end
+        let data = vec![(0.0, 10.0), (1.0, 50.0)];
+        let runs = build_color_runs(&data, &defaults());
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].zone, 0);
+        assert_eq!(runs[0].points.len(), 2);
+    }
+
+    #[test]
+    fn runs_sample_exactly_on_threshold_falling_splits_at_sample() {
+        // first point sits on warn; the descending segment is green
+        let data = vec![(0.0, 50.0), (1.0, 10.0)];
+        let runs = build_color_runs(&data, &defaults());
+        assert_eq!(runs.len(), 2);
+        assert_eq!(runs[0].zone, 1);
+        assert_eq!(runs[0].points, vec![(0.0, 50.0)]);
+        assert_eq!(runs[1].zone, 0);
+        assert_eq!(runs[1].points, vec![(0.0, 50.0), (1.0, 10.0)]);
     }
 
     #[test]
